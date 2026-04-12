@@ -1,0 +1,100 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/siddharthshankar/workspace/AI/CLAUDE/AaaG/.claude/hooks/protect-env.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/siddharthshankar/workspace/AI/CLAUDE/AaaG/.claude/hooks/protect-git-push.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/siddharthshankar/workspace/AI/CLAUDE/AaaG/.claude/hooks/protect-destructive.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/siddharthshankar/workspace/AI/CLAUDE/AaaG/.claude/hooks/protect-prod.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/siddharthshankar/workspace/AI/CLAUDE/AaaG/.claude/hooks/audit-log.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/siddharthshankar/workspace/AI/CLAUDE/AaaG/.claude/hooks/auto-draft-pr.sh",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/siddharthshankar/workspace/AI/CLAUDE/AaaG/.claude/hooks/security-scan.sh",
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/siddharthshankar/workspace/AI/CLAUDE/AaaG/.claude/hooks/cost-tracker.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/siddharthshankar/workspace/AI/CLAUDE/AaaG/.claude/hooks/notify-email.sh",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}
