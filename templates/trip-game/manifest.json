@@ -1,0 +1,18 @@
+{
+  "slug": "trip-game",
+  "version": "1.0.0",
+  "display_name": "Trip Game",
+  "platform": "web",
+  "config_schema_version": "1",
+  "consumes": {
+    "meta_keys":       ["app_name", "theme", "recipient_name", "buyer_email", "plan_type"],
+    "user_input_keys": ["group_name", "destination", "game_type", "players", "trip_theme", "age_range"],
+    "media_keys":      [],
+    "ai_content_shape": "GameContent"
+  },
+  "deploy": {
+    "target":            "vercel",
+    "vercel_project_id": "",
+    "env_vars":          ["NEXT_PUBLIC_APP_ID", "NEXT_PUBLIC_CONFIG_URL"]
+  }
+}

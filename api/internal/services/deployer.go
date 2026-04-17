@@ -16,13 +16,15 @@ import (
 type Deployer struct {
 	vercelToken  string
 	vercelTeamID string
+	manifests    *ManifestRegistry
 	client       *http.Client
 }
 
-func NewDeployer(token, teamID string) *Deployer {
+func NewDeployer(token, teamID string, manifests *ManifestRegistry) *Deployer {
 	return &Deployer{
 		vercelToken:  token,
 		vercelTeamID: teamID,
+		manifests:    manifests,
 		client:       &http.Client{Timeout: 30 * time.Second},
 	}
 }
@@ -44,9 +46,21 @@ type DeployResult struct {
 func (d *Deployer) Deploy(req DeployRequest) (*DeployResult, error) {
 	subdomain := buildSubdomain(req.TemplateSlug, req.OwnerName, req.AppID)
 
-	// Vercel deployment API call
-	// In production: use Vercel's deployments API to redeploy a template project
-	// with NEXT_PUBLIC_APP_ID env var so the template fetches the right config.
+	// Resolve Vercel project ID from manifest when available.
+	// Manifests declare vercel_project_id once the Vercel project has been created.
+	vercelProjectID := ""
+	if d.manifests != nil {
+		if m := d.manifests.Get(req.TemplateSlug); m != nil {
+			vercelProjectID = m.Deploy.VercelProjectID
+		}
+	}
+
+	// Build deployment URL: project-scoped when we have a project ID, generic otherwise.
+	deployURL := "https://api.vercel.com/v13/deployments"
+	if vercelProjectID != "" {
+		deployURL = fmt.Sprintf("https://api.vercel.com/v13/deployments?projectId=%s", vercelProjectID)
+	}
+
 	payload := map[string]any{
 		"name":   fmt.Sprintf("aaag-%s", req.AppID[:8]),
 		"target": "production",
@@ -57,7 +71,7 @@ func (d *Deployer) Deploy(req DeployRequest) (*DeployResult, error) {
 	}
 
 	body, _ := json.Marshal(payload)
-	httpReq, err := http.NewRequest("POST", "https://api.vercel.com/v13/deployments", bytes.NewReader(body))
+	httpReq, err := http.NewRequest("POST", deployURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}

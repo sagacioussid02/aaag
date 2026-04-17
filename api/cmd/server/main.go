@@ -18,8 +18,21 @@ func main() {
 
 	r := gin.Default()
 
+	// Load template manifests (templatesDir defaults to ../templates relative to the api/ working dir)
+	templatesDir := os.Getenv("TEMPLATES_DIR")
+	if templatesDir == "" {
+		templatesDir = "../templates"
+	}
+	manifests, err := services.LoadManifests(templatesDir)
+	if err != nil {
+		log.Printf("WARN: could not load template manifests from %s: %v", templatesDir, err)
+		manifests = nil
+	} else {
+		log.Printf("Loaded manifests for templates: %v", manifests.AllSlugs())
+	}
+
 	// Services
-	deployer := services.NewDeployer(os.Getenv("VERCEL_TOKEN"), os.Getenv("VERCEL_TEAM_ID"))
+	deployer := services.NewDeployer(os.Getenv("VERCEL_TOKEN"), os.Getenv("VERCEL_TEAM_ID"), manifests)
 	notifier := services.NewNotifier(os.Getenv("RESEND_API_KEY"))
 	generator := services.NewGenerator(os.Getenv("AI_SERVICE_URL"))
 

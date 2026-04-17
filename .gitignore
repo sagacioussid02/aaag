@@ -1,0 +1,32 @@
+# ── Environment & secrets ─────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.pem
+
+# ── Claude Code local logs ────────────────────────────────────────────────────
+.claude/audit.log
+.claude/costs.log
+
+# ── Go ────────────────────────────────────────────────────────────────────────
+api/bin/
+api/*.exe
+api/*.test
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+ai-service/aaagvenv/
+ai-service/.venv/
+.pytest_cache/
+
+# ── Node / Next.js (platform is a nested git repo — managed separately) ───────
+platform/
+
+# ── OS & editor ───────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

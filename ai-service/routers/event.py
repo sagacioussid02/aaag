@@ -11,11 +11,23 @@ with all the details guests need — schedule, RSVP info, venue, and memories.
 
 
 async def generate(user_config: dict) -> dict:
-    """Generate personalized event app content."""
-    name = user_config.get("event_name", "Our Event")
-    host = user_config.get("host_name", "the host")
-    date = user_config.get("event_date", "soon")
-    message = user_config.get("message", "")
+    """
+    Generate personalized event app content.
+
+    user_config is an AppConfigEnvelope:
+        meta.app_name:             str - event name (set from recipient/app name)
+        user_inputs.event_name:    str - explicit event name override
+        user_inputs.host_name:     str - host's name
+        user_inputs.event_date:    str - event date string
+        user_inputs.message:       str - message from host to guests
+    """
+    meta        = user_config.get("meta", {})
+    user_inputs = user_config.get("user_inputs", {})
+
+    name = user_inputs.get("event_name") or meta.get("app_name", "Our Event")
+    host = user_inputs.get("host_name", "the host")
+    date = user_inputs.get("event_date", "soon")
+    message = user_inputs.get("message", "")
 
     prompt = f"""
 Create a personalized event app for "{name}" hosted by {host} on {date}.

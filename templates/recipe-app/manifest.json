@@ -1,0 +1,18 @@
+{
+  "slug": "recipe-app",
+  "version": "1.0.0",
+  "display_name": "Recipe App",
+  "platform": "web",
+  "config_schema_version": "1",
+  "consumes": {
+    "meta_keys":       ["app_name", "theme", "recipient_name", "buyer_email", "plan_type"],
+    "user_input_keys": ["cuisines", "dietary_restrictions", "skill_level", "message"],
+    "media_keys":      [],
+    "ai_content_shape": "RecipeContent"
+  },
+  "deploy": {
+    "target":            "vercel",
+    "vercel_project_id": "",
+    "env_vars":          ["NEXT_PUBLIC_APP_ID", "NEXT_PUBLIC_CONFIG_URL"]
+  }
+}

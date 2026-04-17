@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from routers import recipe, travel, game, event
+from routers import recipe, travel, game, event, diary
 
 app = FastAPI(title="AaaG AI Service", version="0.1.0")
 
@@ -7,6 +7,7 @@ app.include_router(recipe.router)
 app.include_router(travel.router)
 app.include_router(game.router)
 app.include_router(event.router)
+app.include_router(diary.router)
 
 
 @app.post("/generate")
@@ -17,13 +18,20 @@ async def generate(payload: dict):
 
     Payload:
         {
-          "template_slug": "recipe-app",
+          "template_slug": "personal-diary",
           "user_config": {
-            "recipient_name": "Sarah",
-            "cuisines": ["Italian", "Indian"],
-            "dietary_restrictions": ["vegetarian"],
-            "theme": "warm-rose",
-            "message": "Happy Birthday!"
+            "_version": "1",
+            "meta": {
+              "template_slug": "personal-diary",
+              "app_name": "Sarah's Diary",
+              "theme": "Warm Rose",
+              "plan_type": "spark",
+              "buyer_email": "gifter@example.com",
+              "recipient_name": "Sarah"
+            },
+            "user_inputs": { "personal_message": "Happy Birthday!" },
+            "media": { "photos": [{ "storage_path": "...", "public_url": "...", ... }] },
+            "ai_content": {}
           }
         }
 
@@ -38,6 +46,7 @@ async def generate(payload: dict):
         "travel-planner":   travel.generate,
         "trip-game":        game.generate,
         "event-app":        event.generate,
+        "personal-diary":   diary.generate,
     }
 
     generator_fn = generators.get(slug)

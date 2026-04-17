@@ -69,32 +69,29 @@ func (h *Handler) runGenerationPipeline(orderID, appID string) {
 	log.Printf("Starting generation pipeline for order=%s app=%s", orderID, appID)
 
 	// 1. Load order from DB (implement in db layer)
-	order, userConfig, err := h.db.GetOrderWithConfig(orderID)
+	order, err := h.db.GetOrder(orderID)
 	if err != nil {
 		log.Printf("ERROR: load order %s: %v", orderID, err)
 		return
 	}
 
 	// 2. Generate AI content
-	aiContent, err := h.generator.Generate(order, userConfig)
+	aiContent, err := h.generator.Generate(order)
 	if err != nil {
 		log.Printf("ERROR: generate content for order %s: %v", orderID, err)
 		return
 	}
 
-	// 3. Build full config and store in Supabase Storage
-	fullConfig := map[string]any{
-		"user":    userConfig,
-		"content": aiContent,
-	}
-	configURL, err := h.db.StoreAppConfig(appID, fullConfig)
+	// 3. Merge AI content into the config envelope and store in Supabase Storage
+	order.Config.AIContent = aiContent
+	configURL, err := h.db.StoreAppConfig(appID, order.Config)
 	if err != nil {
 		log.Printf("ERROR: store config for app %s: %v", appID, err)
 		return
 	}
 
 	// 4. Deploy to Vercel
-	ownerName, _ := userConfig["recipient_name"].(string)
+	ownerName := order.Config.Meta.RecipientName
 	deployResult, err := h.deployer.Deploy(services.DeployRequest{
 		TemplateSlug: order.TemplateSlug,
 		AppID:        appID,
@@ -120,7 +117,7 @@ func (h *Handler) runGenerationPipeline(orderID, appID string) {
 	}
 
 	// 6. Send email
-	buyerEmail, _ := userConfig["buyer_email"].(string)
+	buyerEmail := order.Config.Meta.BuyerEmail
 	appURL := fmt.Sprintf("https://%s.aaag.com", deployResult.Subdomain)
 	if err := h.notifier.SendAppReady(buyerEmail, ownerName, appURL, expiresAt); err != nil {
 		log.Printf("WARN: send email for app %s: %v", appID, err)

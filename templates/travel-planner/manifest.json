@@ -1,0 +1,18 @@
+{
+  "slug": "travel-planner",
+  "version": "1.0.0",
+  "display_name": "Travel Planner",
+  "platform": "web",
+  "config_schema_version": "1",
+  "consumes": {
+    "meta_keys":       ["app_name", "theme", "recipient_name", "buyer_email", "plan_type"],
+    "user_input_keys": ["group_name", "destination", "travel_dates", "budget_level", "hotel_style", "interests", "members"],
+    "media_keys":      [],
+    "ai_content_shape": "TravelContent"
+  },
+  "deploy": {
+    "target":            "vercel",
+    "vercel_project_id": "",
+    "env_vars":          ["NEXT_PUBLIC_APP_ID", "NEXT_PUBLIC_CONFIG_URL"]
+  }
+}

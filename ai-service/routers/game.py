@@ -14,20 +14,22 @@ async def generate(user_config: dict) -> dict:
     """
     Generate trip game content (e.g., Pictionary-style, trivia, etc.)
 
-    user_config fields:
-        group_name: str         - "Smoky Mountains Crew"
-        destination: str        - "Smoky Mountains"
-        game_type: str          - "pictionary" | "trivia" | "scavenger_hunt" | "would_you_rather"
-        players: list[str]      - ["Jake", "Maria", "Sidd", "Saloni"]
-        trip_theme: str         - "road trip" | "hiking" | "beach" | "city"
-        age_range: str          - "adults" | "mixed" | "family"
+    user_config is an AppConfigEnvelope:
+        user_inputs.group_name:   str  - "Smoky Mountains Crew"
+        user_inputs.destination:  str  - "Smoky Mountains"
+        user_inputs.game_type:    str  - "pictionary" | "trivia" | "scavenger_hunt" | "would_you_rather"
+        user_inputs.players:      list - ["Jake", "Maria", "Sidd", "Saloni"]
+        user_inputs.trip_theme:   str  - "road trip" | "hiking" | "beach" | "city"
+        user_inputs.age_range:    str  - "adults" | "mixed" | "family"
     """
-    group = user_config.get("group_name", "The Crew")
-    destination = user_config.get("destination", "our trip")
-    game_type = user_config.get("game_type", "trivia")
-    players = user_config.get("players", [])
-    theme = user_config.get("trip_theme", "road trip")
-    age_range = user_config.get("age_range", "adults")
+    user_inputs = user_config.get("user_inputs", {})
+
+    group = user_inputs.get("group_name", "The Crew")
+    destination = user_inputs.get("destination", "our trip")
+    game_type = user_inputs.get("game_type", "trivia")
+    players = user_inputs.get("players", [])
+    theme = user_inputs.get("trip_theme", "road trip")
+    age_range = user_inputs.get("age_range", "adults")
 
     prompt = f"""
 Create a fun {game_type} game pack for {group} on their {destination} trip.

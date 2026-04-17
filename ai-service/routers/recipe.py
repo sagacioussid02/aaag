@@ -15,19 +15,21 @@ async def generate(user_config: dict) -> dict:
     """
     Generate personalized recipe app content.
 
-    user_config fields:
-        recipient_name: str         - "Sarah"
-        cuisines: list[str]         - ["Italian", "Indian"]
-        dietary_restrictions: list  - ["vegetarian", "gluten-free"]
-        skill_level: str            - "beginner" | "intermediate" | "advanced"
-        message: str                - personal message from the gifter
-        theme: str                  - color theme slug
+    user_config is an AppConfigEnvelope:
+        meta.recipient_name:                   str  - "Sarah"
+        user_inputs.cuisines:                  list - ["Italian", "Indian"]
+        user_inputs.dietary_restrictions:      list - ["vegetarian", "gluten-free"]
+        user_inputs.skill_level:               str  - "Beginner" | "Intermediate" | "Advanced"
+        user_inputs.message:                   str  - personal message from the gifter
     """
-    name = user_config.get("recipient_name", "you")
-    cuisines = ", ".join(user_config.get("cuisines", ["any"]))
-    restrictions = ", ".join(user_config.get("dietary_restrictions", [])) or "none"
-    skill = user_config.get("skill_level", "intermediate")
-    message = user_config.get("message", "")
+    meta        = user_config.get("meta", {})
+    user_inputs = user_config.get("user_inputs", {})
+
+    name = meta.get("recipient_name", "you")
+    cuisines = ", ".join(user_inputs.get("cuisines", ["any"]))
+    restrictions = ", ".join(user_inputs.get("dietary_restrictions", [])) or "none"
+    skill = user_inputs.get("skill_level", "intermediate")
+    message = user_inputs.get("message", "")
 
     prompt = f"""
 Create a personalized recipe collection for {name}.

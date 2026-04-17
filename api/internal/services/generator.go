@@ -23,20 +23,21 @@ func NewGenerator(aiServiceURL string) *Generator {
 }
 
 type GenerateRequest struct {
-	TemplateSlug string         `json:"template_slug"`
-	UserConfig   map[string]any `json:"user_config"`
+	TemplateSlug string                    `json:"template_slug"`
+	UserConfig   models.AppConfigEnvelope  `json:"user_config"`
 }
 
 type GenerateResponse struct {
 	Content map[string]any `json:"content"`
 }
 
-// Generate sends user config to the AI service and returns Claude-generated content.
-// e.g. for recipe-app: returns 40 personalized recipes based on user's cuisine prefs.
-func (g *Generator) Generate(order *models.Order, userConfig map[string]any) (map[string]any, error) {
+// Generate sends the app's config envelope to the AI service and returns generated content.
+// The AI service dispatches to the correct generator by template_slug and reads
+// meta/user_inputs/media from the AppConfigEnvelope.
+func (g *Generator) Generate(order *models.Order) (map[string]any, error) {
 	payload := GenerateRequest{
 		TemplateSlug: order.TemplateSlug,
-		UserConfig:   userConfig,
+		UserConfig:   order.Config,
 	}
 
 	body, err := json.Marshal(payload)
