@@ -27,6 +27,15 @@ CREATE TABLE IF NOT EXISTS templates (
   created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- If 001_init.sql already created templates, CREATE TABLE IF NOT EXISTS will not
+-- add newer marketplace columns. Backfill them explicitly for Supabase.
+ALTER TABLE templates ADD COLUMN IF NOT EXISTS emoji TEXT DEFAULT '';
+ALTER TABLE templates ADD COLUMN IF NOT EXISTS creator_id TEXT;
+ALTER TABLE templates ADD COLUMN IF NOT EXISTS creator_name TEXT;
+ALTER TABLE templates ADD COLUMN IF NOT EXISTS revenue_share_pct SMALLINT DEFAULT 0 CHECK (revenue_share_pct BETWEEN 0 AND 70);
+ALTER TABLE templates ADD COLUMN IF NOT EXISTS is_system BOOLEAN DEFAULT TRUE;
+ALTER TABLE templates ADD COLUMN IF NOT EXISTS requires_media BOOLEAN DEFAULT FALSE;
+
 CREATE INDEX IF NOT EXISTS idx_templates_active   ON templates(active);
 CREATE INDEX IF NOT EXISTS idx_templates_category ON templates(category);
 CREATE INDEX IF NOT EXISTS idx_templates_creator  ON templates(creator_id) WHERE creator_id IS NOT NULL;

@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from routers import recipe, travel, game, event, diary
+from routers import recipe, travel, game, event, diary, portfolio
 
 app = FastAPI(title="AaaG AI Service", version="0.1.0")
 
@@ -8,6 +8,7 @@ app.include_router(travel.router)
 app.include_router(game.router)
 app.include_router(event.router)
 app.include_router(diary.router)
+app.include_router(portfolio.router)
 
 
 @app.post("/generate")
@@ -47,6 +48,7 @@ async def generate(payload: dict):
         "trip-game":        game.generate,
         "event-app":        event.generate,
         "personal-diary":   diary.generate,
+        "portfolio-website": portfolio.generate,
     }
 
     generator_fn = generators.get(slug)

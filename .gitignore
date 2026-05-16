@@ -21,9 +21,6 @@ ai-service/aaagvenv/
 ai-service/.venv/
 .pytest_cache/
 
-# ── Node / Next.js (platform is a nested git repo — managed separately) ───────
-platform/
-
 # ── OS & editor ───────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
