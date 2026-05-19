@@ -37,8 +37,8 @@ All TODO and FIXME annotations in the codebase are categorized using the framewo
 
 When adding a new TODO or FIXME:
 1. Include a brief description of the issue.
-2. Tag it with the appropriate severity (critical, high, low).
-3. Indicate the path type (payment, auth, data, UI, infra, other).
+2. Tag it with the appropriate severity (critical, high, medium, low).
+3. Indicate the path type (payment, auth, data, ui, infra, other).
 4. If it affects payment or auth paths, note that it is blocked from fixing until CI is green.
 
 Example:
