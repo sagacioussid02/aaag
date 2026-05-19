@@ -1,155 +1,198 @@
 # TODO/FIXME Triage Framework
 
-## Overview
+This document defines the categorization and handling rules for all TODO and FIXME annotations in the AaaG codebase.
 
-This document defines the categorization schema for all TODO and FIXME annotations in the AaaG codebase. The framework enables consistent classification of technical debt, prioritization of fixes, and risk assessment for feature delivery.
+## Purpose
 
-**Current Status:** 254 TODO/FIXME items identified across the codebase (Sprint N triage phase).
+TODO and FIXME markers indicate incomplete work, known issues, or deferred decisions. This framework ensures:
+- Consistent categorization across the codebase
+- Clear ownership and priority signals
+- Blocking rules for critical paths (payment, auth)
+- Traceability from code to sprint planning
+
+## Severity Levels
+
+### Critical
+
+**Definition:** Blocks deployment, affects payment/auth/data integrity, or poses a security risk.
+
+**Examples:**
+- Unvalidated user input in payment processing
+- Missing JWT expiry check in auth middleware
+- Unencrypted sensitive data in transit
+
+**Action:** Must be resolved before the next production release. If discovered during a sprint, escalate to the manager immediately.
+
+### High
+
+**Definition:** Degrades user experience, causes data loss, or introduces technical debt that compounds risk.
+
+**Examples:**
+- Missing error handling in API response parsing
+- Incomplete feature flag logic
+- Hardcoded credentials or environment-specific values
+
+**Action:** Schedule for resolution in the current or next sprint. Document the impact and owner.
+
+### Low
+
+**Definition:** Nice-to-have improvements, code cleanup, or deferred optimizations.
+
+**Examples:**
+- Unused imports or variables
+- Suboptimal algorithm that doesn't affect user-facing latency
+- Missing comments on non-critical helper functions
+
+**Action:** Log for future sprints. Can be resolved opportunistically during refactoring.
 
 ---
 
-## Categorization Dimensions
+## Path Types
 
-### 1. Severity Level
+Every TODO/FIXME must be tagged with the code path it affects:
 
-Each TODO/FIXME is assigned one of three severity levels:
+### Payment
 
-| Level | Definition | Example | Action |
-|-------|-----------|---------|--------|
-| **Critical** | Blocks feature delivery, payment processing, or authentication. Fixes must be completed before integration tests or production deployment. | "TODO: validate JWT expiry before processing requests" | Fix in Sprint N+1 (after CI is green) |
-| **High** | Impacts code quality, performance, or security but does not block feature delivery. Should be fixed within 2–3 sprints. | "TODO: add error handling for Stripe API timeout" | Fix in Sprint N+1 or N+2 |
-| **Low** | Nice-to-have improvements, refactoring, or documentation. Can be deferred indefinitely if higher-priority work exists. | "TODO: extract magic number to constant" | Fix as capacity allows |
+**Scope:** Stripe integration, order processing, invoice generation, refund logic.
 
-### 2. Path Type
+**Blocking Rule:** TODOs in payment paths are **blocked from fixing** until:
+1. CI pipeline is green (AAAG-F01 complete)
+2. Unit tests cover the affected code path
+3. Integration tests validate end-to-end payment flow
 
-Each TODO/FIXME is tagged by the code path it affects:
+**Rationale:** Payment systems are high-risk; changes require automated validation before merge.
 
-| Path Type | Definition | Examples | Risk |
-|-----------|-----------|----------|------|
-| **Payment** | Affects order processing, payment collection, or financial reconciliation. | Stripe integration, invoice generation, refund logic | 🔴 Highest — blocks revenue |
-| **Auth** | Affects user authentication, authorization, or session management. | JWT validation, role-based access control, login flow | 🔴 Highest — blocks security |
-| **Data** | Affects data integrity, persistence, or migration. | Database schema, validation, caching | 🟠 High — blocks reliability |
-| **UI** | Affects user interface, accessibility, or user experience. | Form validation, error messages, responsive design | 🟡 Medium — blocks usability |
-| **Infra** | Affects deployment, monitoring, logging, or infrastructure. | CI/CD, error tracking, performance monitoring | 🟡 Medium — blocks observability |
-| **Other** | Miscellaneous improvements or refactoring. | Code style, documentation, test coverage | 🟢 Low — nice-to-have |
+### Auth
 
-### 3. Service/File
+**Scope:** JWT validation, session management, permission checks, token refresh.
 
-Each TODO/FIXME is tagged with the service and file where it appears:
+**Blocking Rule:** TODOs in auth paths are **blocked from fixing** until:
+1. CI pipeline is green (AAAG-F01 complete)
+2. Unit tests cover the affected code path
+3. Security review is documented in the PR
 
-| Service | Location | Examples |
-|---------|----------|----------|
-| **api** | `api/cmd/`, `api/internal/`, `api/pkg/` | Go source files |
-| **ai-service** | `ai-service/app/`, `ai-service/services/` | Python source files |
-| **platform** | `platform/app/`, `platform/components/`, `platform/pages/` | TypeScript/React source files |
-| **supabase** | `supabase/migrations/` | SQL migration files |
-| **templates** | `templates/*/` | Template-specific source files |
+**Rationale:** Auth is a critical security boundary; changes require peer review and automated testing.
+
+### Data
+
+**Scope:** Database schema, migrations, data validation, consistency checks.
+
+**Blocking Rule:** TODOs in data paths require:
+1. Migration strategy documented (if schema change)
+2. Rollback plan in place
+3. Backward compatibility verified
+
+**Rationale:** Data changes are hard to undo; planning is essential.
+
+### UI
+
+**Scope:** Frontend components, styling, accessibility, user-facing text.
+
+**Blocking Rule:** None — can be resolved independently.
+
+**Rationale:** UI changes are low-risk and can be iterated quickly.
+
+### Infra
+
+**Scope:** CI/CD, deployment, monitoring, logging, environment configuration.
+
+**Blocking Rule:** TODOs in infra paths require:
+1. Impact assessment (does it affect all environments?)
+2. Rollback strategy
+3. Operator approval if cost or security implications exist
+
+**Rationale:** Infra changes affect the entire team; coordination is necessary.
+
+### Other
+
+**Scope:** Anything not covered above (documentation, tests, tooling).
+
+**Blocking Rule:** None — resolve as time permits.
 
 ---
 
-## Triage Report Format
+## Annotation Format
 
-The triage report is a Markdown table or CSV file listing all TODO/FIXME items with the following columns:
+All TODO and FIXME annotations must follow this format:
 
-```markdown
-| ID | Service | File | Line | Severity | Path Type | Description | Blocked Until | Notes |
-|----|---------|------|------|----------|-----------|-------------|---------------|-------|
-| 1 | api | internal/payment/stripe.go | 42 | Critical | Payment | TODO: validate Stripe webhook signature | CI green | Blocks payment processing |
-| 2 | api | internal/auth/jwt.go | 15 | Critical | Auth | TODO: implement JWT expiry check | CI green | Blocks auth flow |
-| 3 | platform | components/OrderForm.tsx | 88 | High | UI | TODO: add error boundary for form submission | None | Can be fixed in N+1 |
-| ... | ... | ... | ... | ... | ... | ... | ... | ... |
+```
+// TODO(<severity>, <path_type>): <brief description>
+// <optional: additional context or blocking condition>
 ```
 
-### Blocking Rules
+### Examples
 
-**Critical items in payment or auth paths are blocked from fixing until:**
-1. CI is green (Item 1 complete)
-2. The TODO triage is complete (Item 3 complete)
-3. The operator approves the fix plan for Sprint N+1
-
-**Rationale:** Writing fixes against incomplete payment or auth logic risks encoding broken behavior as expected. The triage phase identifies all such items; fixes are then planned and executed with full visibility and CI safety.
-
----
-
-## Adding New TODOs
-
-When adding a new TODO or FIXME to the codebase, follow this format:
-
-```go
-// TODO(severity, path_type): brief description
-// Blocked until: [condition, if applicable]
-// Context: [additional context, if needed]
-```
-
-**Example (Go):**
+**Critical payment issue:**
 ```go
 // TODO(critical, payment): validate Stripe webhook signature before processing
-// Blocked until: CI is green and payment path is fully tested
-// Context: Webhook spoofing risk; see Stripe docs on signature verification
-func handleStripeWebhook(w http.ResponseWriter, r *http.Request) {
-    // ...
-}
+// Blocked until CI is green and webhook handler has unit tests.
 ```
 
-**Example (Python):**
+**High auth issue:**
 ```python
-# TODO(high, data): add database connection pooling for performance
-# Context: Current implementation opens a new connection per request
-async def get_db():
-    # ...
+# TODO(high, auth): check JWT expiry before allowing request
+# Blocked until CI is green and auth middleware is fully tested.
 ```
 
-**Example (TypeScript/React):**
-```typescript
-// TODO(low, ui): extract magic number to constant
-// Context: MAX_RETRIES = 3 appears in three places
-const handleSubmit = async () => {
-    // ...
-};
+**Low UI improvement:**
+```jsx
+// TODO(low, ui): add loading spinner to form submission
+// Can be resolved opportunistically; no blocking condition.
+```
+
+**Data migration:**
+```sql
+-- TODO(high, data): add NOT NULL constraint to users.email
+-- Requires migration strategy: backfill existing NULLs, then add constraint.
+-- Rollback: drop constraint if needed.
 ```
 
 ---
 
-## Triage Workflow (Sprint N)
+## Triage Process
 
-1. **Scan Phase** (Day 1–2)
-   - Run `grep -r "TODO\|FIXME" --include="*.go" --include="*.py" --include="*.tsx" --include="*.ts" --include="*.jsx" --include="*.js" .` across all services.
-   - Collect all matches with file path and line number.
+### During Code Review
 
-2. **Categorization Phase** (Day 2–4)
-   - For each TODO/FIXME, determine:
-     - Severity (critical / high / low)
-     - Path type (payment / auth / data / UI / infra / other)
-     - Service and file
-   - Flag critical items in payment/auth paths as "blocked until CI green".
+1. **Identify:** Peer reviewer spots a TODO/FIXME in the PR.
+2. **Validate:** Check that the annotation follows the format above.
+3. **Assess:** Determine if the severity and path type are correct.
+4. **Block if needed:** If the TODO is in a payment/auth path and CI is not yet green, request that the PR be held until AAAG-F01 is complete.
+5. **Document:** Add a comment in the PR linking to the triage report.
 
-3. **Report Phase** (Day 4–5)
-   - Compile all items into a triage report (Markdown table or CSV).
-   - Commit report to repo at `docs/TRIAGE_REPORT.md` or `docs/triage-report.csv`.
-   - Link report from [CONTRIBUTING.md](../CONTRIBUTING.md) and [README.md](../README.md).
-   - Report summary statistics to sprint review:
-     - Total count: 254
-     - Critical count: [X]
-     - High count: [Y]
-     - Low count: [Z]
-     - Payment-path count: [A]
-     - Auth-path count: [B]
+### During Sprint Planning
 
----
+1. **Scan:** Run a codebase search for all TODO/FIXME markers.
+2. **Report:** Generate a triage report (see [TRIAGE_REPORT.md](TRIAGE_REPORT.md)).
+3. **Prioritize:** Rank by severity and path type.
+4. **Assign:** Allocate to sprints based on risk and effort.
+5. **Track:** Link each TODO to a sprint item or backlog issue.
 
-## Risk Concentration Analysis
+### During Sprint Execution
 
-After triage is complete, the report will reveal:
-
-- **Payment-path risk:** Count of critical/high TODOs in payment processing, invoicing, refunds, and reconciliation.
-- **Auth-path risk:** Count of critical/high TODOs in authentication, authorization, and session management.
-- **Data-path risk:** Count of critical/high TODOs in database schema, validation, and migrations.
-
-These metrics inform the Sprint N+1 fix plan and integration test strategy.
+1. **Resolve or Escalate:** For each assigned TODO:
+   - If straightforward (≤ 0.5 day), resolve inline with a test.
+   - If complex, convert to a tracked issue with acceptance criteria.
+2. **Document Outcome:** In the PR or issue, record:
+   - What was done (resolved, deferred, escalated)
+   - Why (if deferred or escalated)
+   - Test coverage (if resolved)
+3. **Close:** Once resolved, remove the TODO/FIXME annotation.
 
 ---
 
-## References
+## Blocking Rules Summary
 
-- [SPRINT_N.md](../SPRINT_N.md) — Sprint plan and triage phase details
-- [CONTRIBUTING.md](../CONTRIBUTING.md) — Contributor guide with TODO format examples
+| Path Type | Blocking Condition | Unblocks When |
+|---|---|---|
+| **Payment** | CI not green OR no unit tests | AAAG-F01 merged + tests added |
+| **Auth** | CI not green OR no unit tests | AAAG-F01 merged + tests added + security review |
+| **Data** | No migration strategy | Migration strategy documented + rollback plan |
+| **UI** | None | Immediately |
+| **Infra** | No impact assessment | Impact assessed + rollback strategy + operator approval (if needed) |
+| **Other** | None | Immediately |
+
+---
+
+## Questions?
+
+Refer to the sprint plan ([SPRINT_N.md](../SPRINT_N.md)) or the triage report ([TRIAGE_REPORT.md](TRIAGE_REPORT.md)). If you need clarification on severity, path type, or blocking conditions, ask during sprint standup or in the PR review.
