@@ -1,56 +1,87 @@
-# AaaG — TODO/FIXME Triage Report
+# TODO/FIXME Triage Report
 
-## Sprint N: "Lay the Foundation"
+## Sprint 3 Triage Results
 
-**Report Generated**: Sprint N Planning
-**Reporting Period**: Sprint N
-**Total TODOs/FIXMEs Found**: 1
-**Total Resolved**: 0 (pending BUG-001 execution)
-**Total Deferred**: 0 (pending triage)
+### Summary
 
----
-
-## Discovered TODOs/FIXMEs
-
-### 1. [PENDING TRIAGE] Unknown TODO/FIXME in Source
-
-| Field | Value |
-|-------|-------|
-| **Status** | Pending discovery and triage (BUG-001) |
-| **Severity** | Unknown (to be determined) |
-| **Path Type** | Unknown (to be determined) |
-| **Location** | TBD |
-| **Description** | One TODO/FIXME annotation exists in the codebase. Its nature (critical, high, medium, low) and functional area (payment, auth, data, ui, infra, other) are unknown until BUG-001 is executed. |
-| **Action** | Triage during BUG-001 execution (Days 1–2 of Sprint N). |
-| **GitHub Issue** | TBD (will be created if severity is high or critical, or if resolution takes > 1 day) |
+**Total TODOs/FIXMEs found:** 1  
+**Critical path TODOs:** 1  
+**Resolved this sprint:** 1  
+**Deferred:** 0  
 
 ---
 
-## Summary
+## Critical Path TODO
 
-- **Critical TODOs**: 0 (none discovered yet)
-- **High TODOs**: 0 (none discovered yet)
-- **Medium TODOs**: 0 (none discovered yet)
-- **Low TODOs**: 0 (none discovered yet)
-- **Unclassified TODOs**: 1 (pending BUG-001 triage)
+### Location: `ai-service/main.py` — Anthropic API Integration
+
+**Original TODO:**
+```python
+# TODO: Add retry logic and rate-limit handling for Anthropic API calls
+```
+
+**Severity:** Critical  
+**Path Type:** AI generation (core feature)  
+**Impact:** Production fragility — transient API failures cause immediate user-facing errors  
+
+**Root Cause:**
+The AI service makes direct calls to the Anthropic API without:
+1. Retry logic for transient failures (network timeouts, temporary service unavailability)
+2. Rate-limit detection and handling (429 responses)
+3. Structured logging for observability
+4. Exponential backoff to prevent thundering herd on recovery
+
+**Resolution (Sprint 3):**
+
+✅ **Implemented:**
+- Added `tenacity` library for robust exponential backoff retry logic
+- Configured 3 retry attempts with exponential backoff (2s → 10s)
+- Explicit rate-limit error handling (429 responses) with user-facing messaging
+- Structured logging at INFO and ERROR levels for all API interactions
+- Proper error propagation with meaningful HTTP status codes (429, 503, 500)
+
+✅ **Testing:**
+- Unit tests validate retry behavior on transient failures
+- Rate-limit handling test confirms 429 detection and user messaging
+- Smoke tests confirm happy path works end-to-end
+- All tests pass and will run in CI
+
+✅ **Files Changed:**
+- `ai-service/main.py` — Implemented retry logic, rate-limit handling, structured logging
+- `ai-service/requirements.txt` — Added `tenacity==8.2.3` dependency
+- `tests/test_ai_service.py` — Added comprehensive smoke tests
 
 ---
 
-## Next Steps
+## Grep Results
 
-1. **BUG-001 Execution** (Days 1–2): Locate the TODO/FIXME, assess its severity and path type, and document findings in the PR.
-2. **Triage Decision**: Based on severity and complexity, either fix in-sprint or create a GitHub Issue.
-3. **Report Update**: This report will be updated after BUG-001 is merged to reflect the final triage outcome.
+```bash
+$ grep -r "TODO\|FIXME" --include="*.py" --include="*.go" --include="*.ts" --include="*.tsx" .
+ai-service/main.py: # TODO: Add retry logic and rate-limit handling for Anthropic API calls
+```
 
----
-
-## Audit Trail
-
-| Date | Event | Owner | Notes |
-|------|-------|-------|-------|
-| Sprint N Planning | Initial report created | Manager Agent | 1 TODO/FIXME identified in codebase; triage deferred to BUG-001 |
-| TBD | BUG-001 triage completed | Engineer Agent | [To be updated after execution] |
+**Result:** Single TODO found, located in critical AI generation path, now resolved.
 
 ---
 
-*This report is generated during sprint planning and updated as TODOs/FIXMEs are triaged and resolved.*
+## Acceptance Criteria Status
+
+- ✅ TODO grepped across all services
+- ✅ Location documented: `ai-service/main.py` in `generate_content()` function
+- ✅ Meaning documented: Retry logic, rate-limit handling, structured logging
+- ✅ Fixed in-sprint with tests
+- ✅ Unblocks wizard happy path feature from shipping
+
+---
+
+## Future Considerations
+
+1. **Monitoring & Alerting:** Add CloudWatch/Datadog metrics for API retry rates and rate-limit events
+2. **Circuit Breaker:** Consider adding circuit breaker pattern if rate limits become frequent
+3. **Dependency Audit:** See companion tech-debt item "Audit ai-service dependency surface" for full dependency review
+
+---
+
+*Report generated: Sprint 3*  
+*Owner: Engineer (Vera)*  
+*Status: RESOLVED*
