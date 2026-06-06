@@ -1,344 +1,162 @@
 'use client';
 
 import { useState } from 'react';
-import { WizardStateMachine, WizardStep } from '@/lib/wizard-state-machine';
-import {
-  validateCustomization,
-  validateReview,
-  validateCustomizationDataExists,
-} from '@/lib/wizard-validation';
+import { generateMicroApp } from '@/lib/api-client';
 
-/**
- * Wizard Page Component
- *
- * Implements the No-Code Wizard happy path:
- * landing → customization → review → submit → confirmation
- *
- * State transitions are guarded by the WizardStateMachine.
- */
+interface GeneratedApp {
+  title: string;
+  description: string;
+  code: string;
+  gift_url?: string;
+}
 
 export default function WizardPage() {
-  const [stateMachine] = useState(() => new WizardStateMachine('landing'));
-  const [currentStep, setCurrentStep] = useState<WizardStep>('landing');
-  const [customizationData, setCustomizationData] = useState({
-    appName: '',
-    description: '',
-    templateId: '',
+  const [formData, setFormData] = useState({
+    recipient_name: '',
+    occasion: '',
+    theme: '',
+    custom_message: '',
   });
-  const [reviewConfirmed, setReviewConfirmed] = useState(false);
-  const [orderId, setOrderId] = useState<string | null>(null);
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<GeneratedApp | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  /**
-   * Attempt to transition to the next step.
-   * Validates state machine guards and step-specific validation.
-   */
-  const handleTransition = async (targetStep: WizardStep) => {
-    setErrors({});
-
-    // Check if transition is allowed by state machine
-    if (!stateMachine.canTransition(targetStep)) {
-      setErrors({
-        _global: `Cannot navigate from ${currentStep} to ${targetStep}`,
-      });
-      return;
-    }
-
-    // Validate step-specific data before transitioning
-    if (targetStep === 'review') {
-      const validation = validateCustomization(customizationData);
-      if (!validation.isValid) {
-        const errorMap = validation.errors.reduce(
-          (acc, err) => ({ ...acc, [err.field]: err.message }),
-          {}
-        );
-        setErrors(errorMap);
-        return;
-      }
-      stateMachine.setCustomizationData(customizationData);
-    }
-
-    if (targetStep === 'submit') {
-      const validation = validateReview(reviewConfirmed);
-      if (!validation.isValid) {
-        const errorMap = validation.errors.reduce(
-          (acc, err) => ({ ...acc, [err.field]: err.message }),
-          {}
-        );
-        setErrors(errorMap);
-        return;
-      }
-      stateMachine.confirmReview();
-    }
-
-    // Perform state machine transition
-    try {
-      stateMachine.transitionTo(targetStep);
-      setCurrentStep(targetStep);
-    } catch (error) {
-      setErrors({
-        _global: error instanceof Error ? error.message : 'Transition failed',
-      });
-    }
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+    const { name, value } = e.target;
+    setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
-  /**
-   * Submit the order (from submit step to confirmation).
-   */
-  const handleSubmitOrder = async () => {
-    setIsSubmitting(true);
-    setErrors({});
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+    setResult(null);
 
     try {
-      // Call API to create order
-      const response = await fetch('/api/orders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          appName: customizationData.appName,
-          description: customizationData.description,
-          templateId: customizationData.templateId,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to create order');
-      }
-
-      const { orderId: newOrderId } = await response.json();
-      stateMachine.setOrderId(newOrderId);
-      setOrderId(newOrderId);
-
-      // Transition to confirmation
-      stateMachine.transitionTo('confirmation');
-      setCurrentStep('confirmation');
-    } catch (error) {
-      setErrors({
-        _global: error instanceof Error ? error.message : 'Order submission failed',
-      });
+      const response = await generateMicroApp(formData);
+      setResult(response);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to generate micro-app');
     } finally {
-      setIsSubmitting(false);
+      setLoading(false);
     }
-  };
-
-  /**
-   * Reset wizard to landing.
-   */
-  const handleReset = () => {
-    stateMachine.reset();
-    setCurrentStep('landing');
-    setCustomizationData({ appName: '', description: '', templateId: '' });
-    setReviewConfirmed(false);
-    setOrderId(null);
-    setErrors({});
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-8">
-      <div className="max-w-2xl mx-auto bg-white rounded-lg shadow-lg p-8">
-        {/* Global error message */}
-        {errors._global && (
-          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded text-red-700">
-            {errors._global}
-          </div>
-        )}
+    <div className="min-h-screen bg-gradient-to-br from-purple-50 to-blue-50 p-8">
+      <div className="max-w-2xl mx-auto">
+        <h1 className="text-4xl font-bold text-gray-900 mb-2">Create a Gift Micro-App</h1>
+        <p className="text-gray-600 mb-8">Personalize a micro-app for someone special in minutes.</p>
 
-        {/* Landing Step */}
-        {currentStep === 'landing' && (
-          <div>
-            <h1 className="text-4xl font-bold mb-4">No Code. Ready in Minutes.</h1>
-            <p className="text-lg text-gray-600 mb-8">
-              Create a personalized micro-app without writing a single line of code.
-            </p>
-            <button
-              onClick={() => handleTransition('customization')}
-              className="bg-indigo-600 text-white px-8 py-3 rounded-lg font-semibold hover:bg-indigo-700"
-            >
-              Get Started
-            </button>
-          </div>
-        )}
-
-        {/* Customization Step */}
-        {currentStep === 'customization' && (
-          <div>
-            <h2 className="text-2xl font-bold mb-6">Customize Your App</h2>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  App Name
-                </label>
-                <input
-                  type="text"
-                  value={customizationData.appName}
-                  onChange={(e) =>
-                    setCustomizationData({ ...customizationData, appName: e.target.value })
-                  }
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                  placeholder="My Awesome App"
-                />
-                {errors.appName && (
-                  <p className="text-red-600 text-sm mt-1">{errors.appName}</p>
-                )}
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Description
-                </label>
-                <textarea
-                  value={customizationData.description}
-                  onChange={(e) =>
-                    setCustomizationData({ ...customizationData, description: e.target.value })
-                  }
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                  placeholder="What does your app do?"
-                  rows={4}
-                />
-                {errors.description && (
-                  <p className="text-red-600 text-sm mt-1">{errors.description}</p>
-                )}
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Template
-                </label>
-                <select
-                  value={customizationData.templateId}
-                  onChange={(e) =>
-                    setCustomizationData({ ...customizationData, templateId: e.target.value })
-                  }
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                >
-                  <option value="">Select a template</option>
-                  <option value="template-1">Template 1: Blog</option>
-                  <option value="template-2">Template 2: Portfolio</option>
-                  <option value="template-3">Template 3: E-commerce</option>
-                </select>
-                {errors.templateId && (
-                  <p className="text-red-600 text-sm mt-1">{errors.templateId}</p>
-                )}
-              </div>
-            </div>
-            <div className="flex gap-4 mt-8">
-              <button
-                onClick={() => handleTransition('landing')}
-                className="px-6 py-2 border border-gray-300 rounded-lg font-semibold hover:bg-gray-50"
-              >
-                Back
-              </button>
-              <button
-                onClick={() => handleTransition('review')}
-                className="flex-1 bg-indigo-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-indigo-700"
-              >
-                Review
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Review Step */}
-        {currentStep === 'review' && (
-          <div>
-            <h2 className="text-2xl font-bold mb-6">Review Your App</h2>
-            <div className="bg-gray-50 p-6 rounded-lg mb-6">
-              <p className="mb-2">
-                <strong>App Name:</strong> {customizationData.appName}
-              </p>
-              <p className="mb-2">
-                <strong>Description:</strong> {customizationData.description}
-              </p>
-              <p>
-                <strong>Template:</strong> {customizationData.templateId}
-              </p>
-            </div>
-            <div className="mb-6">
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={reviewConfirmed}
-                  onChange={(e) => setReviewConfirmed(e.target.checked)}
-                  className="w-4 h-4 rounded border-gray-300 focus:ring-2 focus:ring-indigo-500"
-                />
-                <span className="text-gray-700">
-                  I confirm the details above are correct
-                </span>
+        {!result ? (
+          <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow-lg p-8 space-y-6">
+            <div>
+              <label htmlFor="recipient_name" className="block text-sm font-medium text-gray-700 mb-2">
+                Recipient Name
               </label>
-              {errors.reviewConfirmed && (
-                <p className="text-red-600 text-sm mt-2">{errors.reviewConfirmed}</p>
-              )}
+              <input
+                type="text"
+                id="recipient_name"
+                name="recipient_name"
+                value={formData.recipient_name}
+                onChange={handleChange}
+                required
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                placeholder="e.g., Sarah"
+              />
             </div>
-            <div className="flex gap-4">
-              <button
-                onClick={() => handleTransition('customization')}
-                className="px-6 py-2 border border-gray-300 rounded-lg font-semibold hover:bg-gray-50"
-              >
-                Back
-              </button>
-              <button
-                onClick={() => handleTransition('submit')}
-                className="flex-1 bg-indigo-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-indigo-700 disabled:opacity-50"
-                disabled={!reviewConfirmed}
-              >
-                Continue to Payment
-              </button>
-            </div>
-          </div>
-        )}
 
-        {/* Submit Step */}
-        {currentStep === 'submit' && (
-          <div>
-            <h2 className="text-2xl font-bold mb-6">Complete Your Order</h2>
-            <p className="text-gray-600 mb-6">
-              Click below to complete your order and deploy your app.
-            </p>
-            <div className="flex gap-4">
-              <button
-                onClick={() => handleTransition('review')}
-                className="px-6 py-2 border border-gray-300 rounded-lg font-semibold hover:bg-gray-50"
+            <div>
+              <label htmlFor="occasion" className="block text-sm font-medium text-gray-700 mb-2">
+                Occasion
+              </label>
+              <select
+                id="occasion"
+                name="occasion"
+                value={formData.occasion}
+                onChange={handleChange}
+                required
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
               >
-                Back
-              </button>
-              <button
-                onClick={handleSubmitOrder}
-                disabled={isSubmitting}
-                className="flex-1 bg-green-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-green-700 disabled:opacity-50"
-              >
-                {isSubmitting ? 'Submitting...' : 'Submit Order'}
-              </button>
+                <option value="">Select an occasion</option>
+                <option value="birthday">Birthday</option>
+                <option value="anniversary">Anniversary</option>
+                <option value="graduation">Graduation</option>
+                <option value="promotion">Promotion</option>
+                <option value="thank_you">Thank You</option>
+              </select>
             </div>
-          </div>
-        )}
 
-        {/* Confirmation Step */}
-        {currentStep === 'confirmation' && (
-          <div className="text-center">
-            <div className="mb-6">
-              <div className="inline-block w-16 h-16 bg-green-100 rounded-full flex items-center justify-center">
-                <svg
-                  className="w-8 h-8 text-green-600"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M5 13l4 4L19 7"
-                  />
-                </svg>
-              </div>
+            <div>
+              <label htmlFor="theme" className="block text-sm font-medium text-gray-700 mb-2">
+                Theme
+              </label>
+              <select
+                id="theme"
+                name="theme"
+                value={formData.theme}
+                onChange={handleChange}
+                required
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+              >
+                <option value="">Select a theme</option>
+                <option value="adventure">Adventure</option>
+                <option value="wellness">Wellness</option>
+                <option value="creativity">Creativity</option>
+                <option value="learning">Learning</option>
+              </select>
             </div>
-            <h2 className="text-3xl font-bold mb-4">Order Confirmed!</h2>
-            <p className="text-gray-600 mb-2">Your app is being deployed.</p>
-            <p className="text-lg font-semibold text-indigo-600 mb-8">Order ID: {orderId}</p>
+
+            <div>
+              <label htmlFor="custom_message" className="block text-sm font-medium text-gray-700 mb-2">
+                Custom Message (Optional)
+              </label>
+              <textarea
+                id="custom_message"
+                name="custom_message"
+                value={formData.custom_message}
+                onChange={handleChange}
+                rows={4}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                placeholder="Add a personal message..."
+              />
+            </div>
+
+            {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">{error}</div>}
+
             <button
-              onClick={handleReset}
-              className="bg-indigo-600 text-white px-8 py-3 rounded-lg font-semibold hover:bg-indigo-700"
+              type="submit"
+              disabled={loading}
+              className="w-full bg-purple-600 hover:bg-purple-700 disabled:bg-gray-400 text-white font-semibold py-3 rounded-lg transition"
             >
-              Create Another App
+              {loading ? 'Generating...' : 'Generate Micro-App'}
+            </button>
+          </form>
+        ) : (
+          <div className="bg-white rounded-lg shadow-lg p-8">
+            <h2 className="text-2xl font-bold text-gray-900 mb-4">{result.title}</h2>
+            <p className="text-gray-600 mb-6">{result.description}</p>
+            <div className="bg-gray-50 rounded-lg p-4 mb-6 font-mono text-sm overflow-auto max-h-64">
+              <pre>{result.code}</pre>
+            </div>
+            {result.gift_url && (
+              <a
+                href={result.gift_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-block bg-purple-600 hover:bg-purple-700 text-white font-semibold py-2 px-6 rounded-lg transition"
+              >
+                View Micro-App
+              </a>
+            )}
+            <button
+              onClick={() => {
+                setResult(null);
+                setFormData({ recipient_name: '', occasion: '', theme: '', custom_message: '' });
+              }}
+              className="ml-4 bg-gray-300 hover:bg-gray-400 text-gray-900 font-semibold py-2 px-6 rounded-lg transition"
+            >
+              Create Another
             </button>
           </div>
         )}
