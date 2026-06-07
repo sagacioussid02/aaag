@@ -1,87 +1,41 @@
-# TODO/FIXME Triage Report
+# Triage Report — Sprint 5
 
-## Sprint 3 Triage Results
+## Summary
 
-### Summary
+As of Sprint 5, the codebase has **zero TODO/FIXME markers** in the payments/order lifecycle code.
 
-**Total TODOs/FIXMEs found:** 1  
-**Critical path TODOs:** 1  
-**Resolved this sprint:** 1  
-**Deferred:** 0  
+## Resolved Items
 
----
+### 1. Self-Gifting Validation in Order Creation
 
-## Critical Path TODO
+**Location:** `api/internal/orders/orders.go` — `CreateOrder()` method
 
-### Location: `ai-service/main.py` — Anthropic API Integration
+**Original Issue:** TODO marker indicated that order creation did not validate whether the customer and recipient were the same person. This was a known-unknown in the payments-adjacent codebase.
 
-**Original TODO:**
-```python
-# TODO: Add retry logic and rate-limit handling for Anthropic API calls
-```
+**Resolution:** 
+- Added validation to prevent self-gifting: `customer_email` and `recipient_email` must be different.
+- Returns error: `"customer_email and recipient_email must be different"`
+- Validation occurs before order persistence, preventing invalid orders from entering the database.
 
-**Severity:** Critical  
-**Path Type:** AI generation (core feature)  
-**Impact:** Production fragility — transient API failures cause immediate user-facing errors  
+**Test Coverage:**
+- `TestCreateOrderSelfGiftingPrevented()` — Verifies that self-gifting attempts are rejected.
+- `TestCreateOrderSuccess()` — Verifies that valid orders (different customer and recipient) are created successfully.
+- Additional tests for email validation, required field validation, and order lifecycle operations.
 
-**Root Cause:**
-The AI service makes direct calls to the Anthropic API without:
-1. Retry logic for transient failures (network timeouts, temporary service unavailability)
-2. Rate-limit detection and handling (429 responses)
-3. Structured logging for observability
-4. Exponential backoff to prevent thundering herd on recovery
+**Risk Assessment:** Low. The fix is isolated to order validation logic and is fully covered by unit tests. No breaking changes to the API contract.
 
-**Resolution (Sprint 3):**
+## Verification
 
-✅ **Implemented:**
-- Added `tenacity` library for robust exponential backoff retry logic
-- Configured 3 retry attempts with exponential backoff (2s → 10s)
-- Explicit rate-limit error handling (429 responses) with user-facing messaging
-- Structured logging at INFO and ERROR levels for all API interactions
-- Proper error propagation with meaningful HTTP status codes (429, 503, 500)
-
-✅ **Testing:**
-- Unit tests validate retry behavior on transient failures
-- Rate-limit handling test confirms 429 detection and user messaging
-- Smoke tests confirm happy path works end-to-end
-- All tests pass and will run in CI
-
-✅ **Files Changed:**
-- `ai-service/main.py` — Implemented retry logic, rate-limit handling, structured logging
-- `ai-service/requirements.txt` — Added `tenacity==8.2.3` dependency
-- `tests/test_ai_service.py` — Added comprehensive smoke tests
-
----
-
-## Grep Results
+Run the following command to verify zero TODO/FIXME markers:
 
 ```bash
-$ grep -r "TODO\|FIXME" --include="*.py" --include="*.go" --include="*.ts" --include="*.tsx" .
-ai-service/main.py: # TODO: Add retry logic and rate-limit handling for Anthropic API calls
+grep -rn 'TODO\|FIXME' api/ platform/ ai-service/ --exclude-dir=node_modules --exclude-dir=.venv --exclude-dir=__pycache__
 ```
 
-**Result:** Single TODO found, located in critical AI generation path, now resolved.
+Expected output: No matches.
 
----
+## Next Steps
 
-## Acceptance Criteria Status
-
-- ✅ TODO grepped across all services
-- ✅ Location documented: `ai-service/main.py` in `generate_content()` function
-- ✅ Meaning documented: Retry logic, rate-limit handling, structured logging
-- ✅ Fixed in-sprint with tests
-- ✅ Unblocks wizard happy path feature from shipping
-
----
-
-## Future Considerations
-
-1. **Monitoring & Alerting:** Add CloudWatch/Datadog metrics for API retry rates and rate-limit events
-2. **Circuit Breaker:** Consider adding circuit breaker pattern if rate limits become frequent
-3. **Dependency Audit:** See companion tech-debt item "Audit ai-service dependency surface" for full dependency review
-
----
-
-*Report generated: Sprint 3*  
-*Owner: Engineer (Vera)*  
-*Status: RESOLVED*
+- Merge this PR to resolve the Sprint 5 bug task.
+- CI will run the full test suite to validate the fix.
+- Once merged, the sprint goal "Establish CI, contracts, and secure foundations" can proceed without the known-unknown risk in the payments lifecycle.
