@@ -2,142 +2,101 @@ package orders
 
 import (
 	"context"
-	"fmt"
 	"regexp"
-	"strings"
-	"time"
-
-	"github.com/google/uuid"
 )
 
 // Order represents a gift order in the system
 type Order struct {
-	ID            string    `json:"id"`
-	CustomerEmail string    `json:"customer_email"`
-	RecipientEmail string   `json:"recipient_email"`
-	TemplateID    string    `json:"template_id"`
-	Status        string    `json:"status"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID            string
+	CustomerID    string
+	RecipientID   string
+	CustomerEmail string
+	RecipientEmail string
+	TemplateID    string
+	Status        string // TODO(medium, data): refactor to enum type (tracked in issue #42)
+	CreatedAt     string
+	UpdatedAt     string
 }
 
-// RepositoryInterface defines the contract for order persistence
-type RepositoryInterface interface {
+// CreateOrderRequest represents the input for creating an order
+type CreateOrderRequest struct {
+	CustomerID     string `json:"customer_id" binding:"required"`
+	RecipientID    string `json:"recipient_id" binding:"required"`
+	CustomerEmail  string `json:"customer_email" binding:"required"`
+	RecipientEmail string `json:"recipient_email" binding:"required"`
+	TemplateID     string `json:"template_id" binding:"required"`
+}
+
+// OrderRepository defines the interface for order persistence
+type OrderRepository interface {
 	CreateOrder(ctx context.Context, order *Order) error
-	GetOrder(ctx context.Context, id string) (*Order, error)
-	UpdateOrderStatus(ctx context.Context, id string, status string) error
-	ListOrders(ctx context.Context, customerEmail string) ([]*Order, error)
+	UpdateOrderStatus(ctx context.Context, orderID string, status string) error
+	ListOrders(ctx context.Context, customerID string) ([]*Order, error)
 }
 
-// Service handles order business logic
-type Service struct {
-	repo RepositoryInterface
+// OrderService handles order business logic
+type OrderService struct {
+	repo OrderRepository
 }
 
-// NewService creates a new order service
-func NewService(repo RepositoryInterface) *Service {
-	return &Service{repo: repo}
+// NewOrderService creates a new order service
+func NewOrderService(repo OrderRepository) *OrderService {
+	return &OrderService{repo: repo}
 }
 
-// CreateOrder creates a new order with validation
-// Prevent self-gifting: customer and recipient must be different
-// This was the unresolved TODO: ensure orders are not created with identical customer and recipient emails.
-func (s *Service) CreateOrder(ctx context.Context, customerEmail, recipientEmail, templateID string) (*Order, error) {
-	// Validate required fields
-	if strings.TrimSpace(customerEmail) == "" {
-		return nil, fmt.Errorf("customer_email is required")
-	}
-	if strings.TrimSpace(recipientEmail) == "" {
-		return nil, fmt.Errorf("recipient_email is required")
-	}
-	if strings.TrimSpace(templateID) == "" {
-		return nil, fmt.Errorf("template_id is required")
-	}
-
-	// Validate email formats
-	if !isValidEmail(customerEmail) {
-		return nil, fmt.Errorf("invalid customer_email format")
-	}
-	if !isValidEmail(recipientEmail) {
-		return nil, fmt.Errorf("invalid recipient_email format")
-	}
-
+// CreateOrder creates a new order with self-gifting prevention
+func (s *OrderService) CreateOrder(ctx context.Context, req *CreateOrderRequest) (*Order, error) {
 	// Prevent self-gifting: customer and recipient must be different
-	if strings.EqualFold(customerEmail, recipientEmail) {
-		return nil, fmt.Errorf("customer and recipient must be different")
+	if req.CustomerID == req.RecipientID {
+		return nil, ErrSelfGiftingNotAllowed
 	}
 
-	now := time.Now()
+	// Validate email addresses
+	if !isValidEmail(req.CustomerEmail) {
+		return nil, ErrInvalidCustomerEmail
+	}
+	if !isValidEmail(req.RecipientEmail) {
+		return nil, ErrInvalidRecipientEmail
+	}
+
+	// Validate required fields
+	if req.TemplateID == "" {
+		return nil, ErrMissingTemplateID
+	}
+
 	order := &Order{
-		ID:             uuid.New().String(),
-		CustomerEmail:  customerEmail,
-		RecipientEmail: recipientEmail,
-		TemplateID:     templateID,
+		CustomerID:     req.CustomerID,
+		RecipientID:    req.RecipientID,
+		CustomerEmail:  req.CustomerEmail,
+		RecipientEmail: req.RecipientEmail,
+		TemplateID:     req.TemplateID,
 		Status:         "pending",
-		CreatedAt:      now,
-		UpdatedAt:      now,
 	}
 
 	if err := s.repo.CreateOrder(ctx, order); err != nil {
-		return nil, fmt.Errorf("failed to create order: %w", err)
-	}
-
-	return order, nil
-}
-
-// GetOrder retrieves an order by ID
-func (s *Service) GetOrder(ctx context.Context, id string) (*Order, error) {
-	if strings.TrimSpace(id) == "" {
-		return nil, fmt.Errorf("order id is required")
-	}
-
-	order, err := s.repo.GetOrder(ctx, id)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get order: %w", err)
+		return nil, err
 	}
 
 	return order, nil
 }
 
 // UpdateOrderStatus updates the status of an order
-func (s *Service) UpdateOrderStatus(ctx context.Context, id string, status string) error {
-	if strings.TrimSpace(id) == "" {
-		return fmt.Errorf("order id is required")
-	}
-	if strings.TrimSpace(status) == "" {
-		return fmt.Errorf("status is required")
-	}
-
-	if err := s.repo.UpdateOrderStatus(ctx, id, status); err != nil {
-		return fmt.Errorf("failed to update order status: %w", err)
-	}
-
-	return nil
+func (s *OrderService) UpdateOrderStatus(ctx context.Context, orderID string, status string) error {
+	return s.repo.UpdateOrderStatus(ctx, orderID, status)
 }
 
-// ListOrders retrieves all orders for a customer
-func (s *Service) ListOrders(ctx context.Context, customerEmail string) ([]*Order, error) {
-	if strings.TrimSpace(customerEmail) == "" {
-		return nil, fmt.Errorf("customer_email is required")
-	}
-
-	orders, err := s.repo.ListOrders(ctx, customerEmail)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list orders: %w", err)
-	}
-
-	return orders, nil
+// ListOrders lists all orders for a customer
+func (s *OrderService) ListOrders(ctx context.Context, customerID string) ([]*Order, error) {
+	return s.repo.ListOrders(ctx, customerID)
 }
 
-// isValidEmail performs a basic email validation
+// isValidEmail validates an email address using a simple regex
 func isValidEmail(email string) bool {
-	email = strings.TrimSpace(email)
 	if email == "" {
 		return false
 	}
-
-	// Basic email regex pattern
+	// Simple email validation regex
 	pattern := `^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`
-	re := regexp.MustCompile(pattern)
-	return re.MatchString(email)
+	matched, _ := regexp.MatchString(pattern, email)
+	return matched
 }
