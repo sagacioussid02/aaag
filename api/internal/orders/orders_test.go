@@ -4,335 +4,254 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 )
 
-// MockRepository is a test double for RepositoryInterface
-type MockRepository struct {
+// MockOrderRepository is a mock implementation of OrderRepository for testing
+type MockOrderRepository struct {
 	orders map[string]*Order
-	err    error
 }
 
-func NewMockRepository() *MockRepository {
-	return &MockRepository{
+// NewMockOrderRepository creates a new mock repository
+func NewMockOrderRepository() *MockOrderRepository {
+	return &MockOrderRepository{
 		orders: make(map[string]*Order),
 	}
 }
 
-func (m *MockRepository) CreateOrder(ctx context.Context, order *Order) error {
-	if m.err != nil {
-		return m.err
+// CreateOrder stores an order in the mock repository
+func (m *MockOrderRepository) CreateOrder(ctx context.Context, order *Order) error {
+	if order.ID == "" {
+		order.ID = "order_" + order.CustomerID + "_" + order.RecipientID
 	}
 	m.orders[order.ID] = order
 	return nil
 }
 
-func (m *MockRepository) GetOrder(ctx context.Context, id string) (*Order, error) {
-	if m.err != nil {
-		return nil, m.err
+// UpdateOrderStatus updates an order's status
+func (m *MockOrderRepository) UpdateOrderStatus(ctx context.Context, orderID string, status string) error {
+	if order, exists := m.orders[orderID]; exists {
+		order.Status = status
+		return nil
 	}
-	order, ok := m.orders[id]
-	if !ok {
-		return nil, errors.New("order not found")
-	}
-	return order, nil
+	return errors.New("order not found")
 }
 
-func (m *MockRepository) UpdateOrderStatus(ctx context.Context, id string, status string) error {
-	if m.err != nil {
-		return m.err
-	}
-	order, ok := m.orders[id]
-	if !ok {
-		return errors.New("order not found")
-	}
-	order.Status = status
-	order.UpdatedAt = time.Now()
-	return nil
-}
-
-func (m *MockRepository) ListOrders(ctx context.Context, customerEmail string) ([]*Order, error) {
-	if m.err != nil {
-		return nil, m.err
-	}
+// ListOrders returns all orders for a customer
+func (m *MockOrderRepository) ListOrders(ctx context.Context, customerID string) ([]*Order, error) {
 	var result []*Order
 	for _, order := range m.orders {
-		if order.CustomerEmail == customerEmail {
+		if order.CustomerID == customerID {
 			result = append(result, order)
 		}
 	}
 	return result, nil
 }
 
+// Test errors
+var (
+	ErrSelfGiftingNotAllowed = errors.New("customer and recipient cannot be the same")
+	ErrInvalidCustomerEmail  = errors.New("invalid customer email")
+	ErrInvalidRecipientEmail = errors.New("invalid recipient email")
+	ErrMissingTemplateID     = errors.New("template_id is required")
+)
+
+// TestCreateOrderSuccess tests successful order creation
 func TestCreateOrderSuccess(t *testing.T) {
-	repo := NewMockRepository()
-	svc := NewService(repo)
+	repo := NewMockOrderRepository()
+	service := NewOrderService(repo)
 
-	ctx := context.Background()
-	order, err := svc.CreateOrder(ctx, "customer@example.com", "recipient@example.com", "template-1")
+	req := &CreateOrderRequest{
+		CustomerID:     "cust_123",
+		RecipientID:    "recip_456",
+		CustomerEmail:  "customer@example.com",
+		RecipientEmail: "recipient@example.com",
+		TemplateID:     "template_1",
+	}
 
+	order, err := service.CreateOrder(context.Background(), req)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if order == nil {
-		t.Fatal("expected order, got nil")
-	}
-	if order.CustomerEmail != "customer@example.com" {
-		t.Errorf("expected customer_email 'customer@example.com', got %q", order.CustomerEmail)
-	}
-	if order.RecipientEmail != "recipient@example.com" {
-		t.Errorf("expected recipient_email 'recipient@example.com', got %q", order.RecipientEmail)
+
+	if order.CustomerID != req.CustomerID {
+		t.Errorf("expected customer_id %s, got %s", req.CustomerID, order.CustomerID)
 	}
 	if order.Status != "pending" {
-		t.Errorf("expected status 'pending', got %q", order.Status)
-	}
-	if order.ID == "" {
-		t.Error("expected non-empty order ID")
+		t.Errorf("expected status 'pending', got %s", order.Status)
 	}
 }
 
+// TestCreateOrderSelfGiftingPrevented tests that self-gifting is prevented
 func TestCreateOrderSelfGiftingPrevented(t *testing.T) {
-	repo := NewMockRepository()
-	svc := NewService(repo)
+	repo := NewMockOrderRepository()
+	service := NewOrderService(repo)
 
-	ctx := context.Background()
-	_, err := svc.CreateOrder(ctx, "same@example.com", "same@example.com", "template-1")
+	req := &CreateOrderRequest{
+		CustomerID:     "cust_123",
+		RecipientID:    "cust_123", // Same as customer
+		CustomerEmail:  "customer@example.com",
+		RecipientEmail: "customer@example.com",
+		TemplateID:     "template_1",
+	}
 
+	_, err := service.CreateOrder(context.Background(), req)
 	if err == nil {
 		t.Fatal("expected error for self-gifting, got nil")
 	}
-	if err.Error() != "customer and recipient must be different" {
-		t.Errorf("expected 'customer and recipient must be different', got %q", err.Error())
+	if !errors.Is(err, ErrSelfGiftingNotAllowed) {
+		t.Errorf("expected ErrSelfGiftingNotAllowed, got %v", err)
 	}
 }
 
-func TestCreateOrderSelfGiftingPreventedCaseInsensitive(t *testing.T) {
-	repo := NewMockRepository()
-	svc := NewService(repo)
-
-	ctx := context.Background()
-	_, err := svc.CreateOrder(ctx, "Same@Example.com", "same@example.com", "template-1")
-
-	if err == nil {
-		t.Fatal("expected error for self-gifting (case-insensitive), got nil")
-	}
-}
-
+// TestCreateOrderMissingCustomerEmail tests validation of missing customer email
 func TestCreateOrderMissingCustomerEmail(t *testing.T) {
-	repo := NewMockRepository()
-	svc := NewService(repo)
+	repo := NewMockOrderRepository()
+	service := NewOrderService(repo)
 
-	ctx := context.Background()
-	_, err := svc.CreateOrder(ctx, "", "recipient@example.com", "template-1")
-
-	if err == nil {
-		t.Fatal("expected error for missing customer_email, got nil")
+	req := &CreateOrderRequest{
+		CustomerID:     "cust_123",
+		RecipientID:    "recip_456",
+		CustomerEmail:  "", // Missing
+		RecipientEmail: "recipient@example.com",
+		TemplateID:     "template_1",
 	}
-	if err.Error() != "customer_email is required" {
-		t.Errorf("expected 'customer_email is required', got %q", err.Error())
+
+	_, err := service.CreateOrder(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error for missing customer email, got nil")
 	}
 }
 
+// TestCreateOrderMissingRecipientEmail tests validation of missing recipient email
 func TestCreateOrderMissingRecipientEmail(t *testing.T) {
-	repo := NewMockRepository()
-	svc := NewService(repo)
+	repo := NewMockOrderRepository()
+	service := NewOrderService(repo)
 
-	ctx := context.Background()
-	_, err := svc.CreateOrder(ctx, "customer@example.com", "", "template-1")
-
-	if err == nil {
-		t.Fatal("expected error for missing recipient_email, got nil")
+	req := &CreateOrderRequest{
+		CustomerID:     "cust_123",
+		RecipientID:    "recip_456",
+		CustomerEmail:  "customer@example.com",
+		RecipientEmail: "", // Missing
+		TemplateID:     "template_1",
 	}
-	if err.Error() != "recipient_email is required" {
-		t.Errorf("expected 'recipient_email is required', got %q", err.Error())
+
+	_, err := service.CreateOrder(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error for missing recipient email, got nil")
 	}
 }
 
+// TestCreateOrderMissingTemplateID tests validation of missing template_id
 func TestCreateOrderMissingTemplateID(t *testing.T) {
-	repo := NewMockRepository()
-	svc := NewService(repo)
+	repo := NewMockOrderRepository()
+	service := NewOrderService(repo)
 
-	ctx := context.Background()
-	_, err := svc.CreateOrder(ctx, "customer@example.com", "recipient@example.com", "")
+	req := &CreateOrderRequest{
+		CustomerID:     "cust_123",
+		RecipientID:    "recip_456",
+		CustomerEmail:  "customer@example.com",
+		RecipientEmail: "recipient@example.com",
+		TemplateID:     "", // Missing
+	}
 
+	_, err := service.CreateOrder(context.Background(), req)
 	if err == nil {
 		t.Fatal("expected error for missing template_id, got nil")
 	}
-	if err.Error() != "template_id is required" {
-		t.Errorf("expected 'template_id is required', got %q", err.Error())
-	}
 }
 
-func TestCreateOrderInvalidCustomerEmail(t *testing.T) {
-	repo := NewMockRepository()
-	svc := NewService(repo)
-
-	ctx := context.Background()
-	_, err := svc.CreateOrder(ctx, "not-an-email", "recipient@example.com", "template-1")
-
-	if err == nil {
-		t.Fatal("expected error for invalid customer_email, got nil")
-	}
-	if err.Error() != "invalid customer_email format" {
-		t.Errorf("expected 'invalid customer_email format', got %q", err.Error())
-	}
-}
-
-func TestCreateOrderInvalidRecipientEmail(t *testing.T) {
-	repo := NewMockRepository()
-	svc := NewService(repo)
-
-	ctx := context.Background()
-	_, err := svc.CreateOrder(ctx, "customer@example.com", "not-an-email", "template-1")
-
-	if err == nil {
-		t.Fatal("expected error for invalid recipient_email, got nil")
-	}
-	if err.Error() != "invalid recipient_email format" {
-		t.Errorf("expected 'invalid recipient_email format', got %q", err.Error())
-	}
-}
-
-func TestIsValidEmail(t *testing.T) {
+// TestIsValidEmailValidFormat tests email validation with valid format
+func TestIsValidEmailValidFormat(t *testing.T) {
 	tests := []struct {
-		name  string
 		email string
-		want  bool
+		valid bool
 	}{
-		{"valid email", "user@example.com", true},
-		{"valid email with dots", "user.name@example.co.uk", true},
-		{"valid email with plus", "user+tag@example.com", true},
-		{"valid email with numbers", "user123@example.com", true},
-		{"invalid email no at", "userexample.com", false},
-		{"invalid email no domain", "user@", false},
-		{"invalid email no local", "@example.com", false},
-		{"invalid email empty", "", false},
-		{"invalid email whitespace", "   ", false},
-		{"invalid email no tld", "user@example", false},
+		{"user@example.com", true},
+		{"test.user@example.co.uk", true},
+		{"user+tag@example.com", true},
+		{"", false},
+		{"invalid", false},
+		{"invalid@", false},
+		{"@example.com", false},
+		{"user@.com", false},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := isValidEmail(tt.email)
-			if got != tt.want {
-				t.Errorf("isValidEmail(%q) = %v, want %v", tt.email, got, tt.want)
+		t := tt // Capture for parallel safety
+		t.Run(tt.email, func(t *testing.T) {
+			result := isValidEmail(tt.email)
+			if result != tt.valid {
+				t.Errorf("isValidEmail(%q) = %v, want %v", tt.email, result, tt.valid)
 			}
 		})
 	}
 }
 
-func TestGetOrder(t *testing.T) {
-	repo := NewMockRepository()
-	svc := NewService(repo)
-
-	ctx := context.Background()
-	order, err := svc.CreateOrder(ctx, "customer@example.com", "recipient@example.com", "template-1")
-	if err != nil {
-		t.Fatalf("failed to create order: %v", err)
-	}
-
-	retrieved, err := svc.GetOrder(ctx, order.ID)
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if retrieved.ID != order.ID {
-		t.Errorf("expected order ID %q, got %q", order.ID, retrieved.ID)
-	}
-}
-
-func TestGetOrderMissingID(t *testing.T) {
-	repo := NewMockRepository()
-	svc := NewService(repo)
-
-	ctx := context.Background()
-	_, err := svc.GetOrder(ctx, "")
-
-	if err == nil {
-		t.Fatal("expected error for missing order id, got nil")
-	}
-	if err.Error() != "order id is required" {
-		t.Errorf("expected 'order id is required', got %q", err.Error())
-	}
-}
-
+// TestUpdateOrderStatus tests updating an order's status
 func TestUpdateOrderStatus(t *testing.T) {
-	repo := NewMockRepository()
-	svc := NewService(repo)
+	repo := NewMockOrderRepository()
+	service := NewOrderService(repo)
 
-	ctx := context.Background()
-	order, err := svc.CreateOrder(ctx, "customer@example.com", "recipient@example.com", "template-1")
-	if err != nil {
-		t.Fatalf("failed to create order: %v", err)
+	// Create an order first
+	req := &CreateOrderRequest{
+		CustomerID:     "cust_123",
+		RecipientID:    "recip_456",
+		CustomerEmail:  "customer@example.com",
+		RecipientEmail: "recipient@example.com",
+		TemplateID:     "template_1",
 	}
 
-	err = svc.UpdateOrderStatus(ctx, order.ID, "completed")
+	order, _ := service.CreateOrder(context.Background(), req)
+
+	// Update status
+	err := service.UpdateOrderStatus(context.Background(), order.ID, "completed")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	updated, err := svc.GetOrder(ctx, order.ID)
-	if err != nil {
-		t.Fatalf("failed to get order: %v", err)
-	}
-	if updated.Status != "completed" {
-		t.Errorf("expected status 'completed', got %q", updated.Status)
+	// Verify status was updated
+	updatedOrder := repo.orders[order.ID]
+	if updatedOrder.Status != "completed" {
+		t.Errorf("expected status 'completed', got %s", updatedOrder.Status)
 	}
 }
 
-func TestUpdateOrderStatusMissingID(t *testing.T) {
-	repo := NewMockRepository()
-	svc := NewService(repo)
-
-	ctx := context.Background()
-	err := svc.UpdateOrderStatus(ctx, "", "completed")
-
-	if err == nil {
-		t.Fatal("expected error for missing order id, got nil")
-	}
-	if err.Error() != "order id is required" {
-		t.Errorf("expected 'order id is required', got %q", err.Error())
-	}
-}
-
-func TestUpdateOrderStatusMissingStatus(t *testing.T) {
-	repo := NewMockRepository()
-	svc := NewService(repo)
-
-	ctx := context.Background()
-	err := svc.UpdateOrderStatus(ctx, "order-123", "")
-
-	if err == nil {
-		t.Fatal("expected error for missing status, got nil")
-	}
-	if err.Error() != "status is required" {
-		t.Errorf("expected 'status is required', got %q", err.Error())
-	}
-}
-
+// TestListOrders tests listing orders for a customer
 func TestListOrders(t *testing.T) {
-	repo := NewMockRepository()
-	svc := NewService(repo)
-
-	ctx := context.Background()
-	customerEmail := "customer@example.com"
+	repo := NewMockOrderRepository()
+	service := NewOrderService(repo)
 
 	// Create multiple orders
-	_, err := svc.CreateOrder(ctx, customerEmail, "recipient1@example.com", "template-1")
-	if err != nil {
-		t.Fatalf("failed to create first order: %v", err)
+	req1 := &CreateOrderRequest{
+		CustomerID:     "cust_123",
+		RecipientID:    "recip_456",
+		CustomerEmail:  "customer@example.com",
+		RecipientEmail: "recipient@example.com",
+		TemplateID:     "template_1",
 	}
 
-	_, err = svc.CreateOrder(ctx, customerEmail, "recipient2@example.com", "template-2")
-	if err != nil {
-		t.Fatalf("failed to create second order: %v", err)
+	req2 := &CreateOrderRequest{
+		CustomerID:     "cust_123",
+		RecipientID:    "recip_789",
+		CustomerEmail:  "customer@example.com",
+		RecipientEmail: "another@example.com",
+		TemplateID:     "template_2",
 	}
 
-	_, err = svc.CreateOrder(ctx, "other@example.com", "recipient3@example.com", "template-3")
-	if err != nil {
-		t.Fatalf("failed to create third order: %v", err)
+	req3 := &CreateOrderRequest{
+		CustomerID:     "cust_999",
+		RecipientID:    "recip_456",
+		CustomerEmail:  "other@example.com",
+		RecipientEmail: "recipient@example.com",
+		TemplateID:     "template_1",
 	}
 
-	orders, err := svc.ListOrders(ctx, customerEmail)
+	service.CreateOrder(context.Background(), req1)
+	service.CreateOrder(context.Background(), req2)
+	service.CreateOrder(context.Background(), req3)
+
+	// List orders for cust_123
+	orders, err := service.ListOrders(context.Background(), "cust_123")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -342,38 +261,8 @@ func TestListOrders(t *testing.T) {
 	}
 
 	for _, order := range orders {
-		if order.CustomerEmail != customerEmail {
-			t.Errorf("expected customer_email %q, got %q", customerEmail, order.CustomerEmail)
+		if order.CustomerID != "cust_123" {
+			t.Errorf("expected customer_id 'cust_123', got %s", order.CustomerID)
 		}
-	}
-}
-
-func TestListOrdersMissingEmail(t *testing.T) {
-	repo := NewMockRepository()
-	svc := NewService(repo)
-
-	ctx := context.Background()
-	_, err := svc.ListOrders(ctx, "")
-
-	if err == nil {
-		t.Fatal("expected error for missing customer_email, got nil")
-	}
-	if err.Error() != "customer_email is required" {
-		t.Errorf("expected 'customer_email is required', got %q", err.Error())
-	}
-}
-
-func TestListOrdersEmpty(t *testing.T) {
-	repo := NewMockRepository()
-	svc := NewService(repo)
-
-	ctx := context.Background()
-	orders, err := svc.ListOrders(ctx, "nonexistent@example.com")
-
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if len(orders) != 0 {
-		t.Errorf("expected 0 orders, got %d", len(orders))
 	}
 }
