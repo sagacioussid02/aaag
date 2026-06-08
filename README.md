@@ -5,7 +5,7 @@
 ## Services
 
 | Service | Tech | Port | Purpose |
-|---------|------|------|---------||
+|---------|------|------|---------|
 | `platform/` | Next.js 14 (TypeScript) | 3000 | Landing page, wizard, dashboard |
 | `api/` | Go + Gin | 8080 | Orders, payments, app lifecycle |
 | `ai-service/` | Python FastAPI | 8000 | Claude-powered content generation |
