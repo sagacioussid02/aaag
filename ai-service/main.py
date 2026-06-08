@@ -1,45 +1,64 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-import anthropic
-import logging
 import os
-from tenacity import retry, stop_after_attempt, wait_exponential
-from datetime import datetime
+import anthropic
 
-# Configure structured logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+app = FastAPI(title="AaaG AI Service", version="1.0.0")
 
-app = FastAPI()
+class GenerateRequest(BaseModel):
+    recipient_name: str
+    occasion: str
+    theme: str
+    custom_message: str = ""
 
-class ContentRequest(BaseModel):
-    app_name: str
+class GenerateResponse(BaseModel):
+    title: str
     description: str
-    template_type: str
+    code: str
+    gift_url: str = ""
 
-class ContentResponse(BaseModel):
-    content: str
-    generated_at: str
+@app.get("/health")
+def health_check():
+    """Health check endpoint."""
+    return {"status": "ok"}
 
-# Initialize Anthropic client
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=2, max=10),
-    reraise=True
-)
-def _call_anthropic_api(prompt: str) -> str:
+@app.post("/generate", response_model=GenerateResponse)
+def generate_micro_app(request: GenerateRequest):
     """
-    Internal method to call Anthropic API with retry logic and rate-limit handling.
-    Implements exponential backoff for transient failures and detects rate limits.
+    Generate a personalized micro-app using Claude.
+    
+    Takes recipient details, occasion, theme, and optional custom message,
+    then returns a generated micro-app with title, description, and code.
     """
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
+    
+    client = anthropic.Anthropic(api_key=api_key)
+    
+    # Build prompt for Claude
+    prompt = f"""
+You are a micro-app generator. Create a personalized micro-app gift.
+
+Recipient: {request.recipient_name}
+Occasion: {request.occasion}
+Theme: {request.theme}
+Custom Message: {request.custom_message or "(none)"}
+
+Generate a micro-app with:
+1. A catchy title
+2. A brief description (1-2 sentences)
+3. Simple HTML/CSS/JavaScript code (under 500 chars)
+
+Respond in JSON format:
+{{
+  "title": "...",
+  "description": "...",
+  "code": "..."
+}}
+"""
+    
     try:
-        logger.info(f"Calling Anthropic API with prompt length: {len(prompt)}")
-        
         message = client.messages.create(
             model="claude-3-5-sonnet-20241022",
             max_tokens=1024,
@@ -48,73 +67,33 @@ def _call_anthropic_api(prompt: str) -> str:
             ]
         )
         
-        logger.info("Anthropic API call succeeded")
-        return message.content[0].text
+        # Parse Claude's response
+        response_text = message.content[0].text
         
-    except anthropic.RateLimitError as e:
-        logger.warning(f"Rate limit hit: {e}. Will retry with exponential backoff.")
-        raise  # tenacity will handle the retry
-    except anthropic.APIError as e:
-        logger.error(f"Anthropic API error: {e}")
-        raise
-
-@app.post("/generate", response_model=ContentResponse)
-async def generate_content(request: ContentRequest) -> ContentResponse:
-    """
-    Generate personalized content for a micro-app using Claude.
+        # Extract JSON from response
+        import json
+        import re
+        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+        if not json_match:
+            raise ValueError("Could not parse JSON from Claude response")
+        
+        parsed = json.loads(json_match.group())
+        
+        return GenerateResponse(
+            title=parsed.get("title", "Untitled Gift"),
+            description=parsed.get("description", "A personalized micro-app gift"),
+            code=parsed.get("code", "<h1>Gift</h1>"),
+            gift_url=""
+        )
     
-    Implements retry logic and rate-limit handling for production robustness.
-    """
-    try:
-        logger.info(f"Generating content for app: {request.app_name}, template: {request.template_type}")
-        
-        prompt = f"""
-        Create personalized content for a micro-app with the following details:
-        - App Name: {request.app_name}
-        - Description: {request.description}
-        - Template Type: {request.template_type}
-        
-        Generate engaging, concise content suitable for the template.
-        """
-        
-        # Call API with retry logic and rate-limit handling
-        content = _call_anthropic_api(prompt)
-        
-        logger.info(f"Content generation succeeded for app: {request.app_name}")
-        
-        return ContentResponse(
-            content=content,
-            generated_at=datetime.utcnow().isoformat()
-        )
-        
-    except anthropic.RateLimitError as e:
-        logger.error(f"Rate limit exceeded after retries: {e}")
-        raise HTTPException(
-            status_code=429,
-            detail="AI service rate limit exceeded. Please try again later."
-        )
     except anthropic.APIError as e:
-        logger.error(f"AI service error: {e}")
-        raise HTTPException(
-            status_code=503,
-            detail="AI service temporarily unavailable. Please try again."
-        )
+        raise HTTPException(status_code=500, detail=f"Claude API error: {str(e)}")
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=500, detail="Failed to parse Claude response")
     except Exception as e:
-        logger.error(f"Unexpected error during content generation: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail="Internal server error during content generation."
-        )
-
-@app.get("/health")
-async def health_check():
-    """
-    Health check endpoint for orchestration and monitoring.
-    """
-    logger.info("Health check requested")
-    return {"status": "healthy", "service": "ai-service"}
+        raise HTTPException(status_code=500, detail=f"Generation failed: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
-    logger.info("Starting AI service")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    port = int(os.getenv("PORT", "8000"))
+    uvicorn.run(app, host="0.0.0.0", port=port)
