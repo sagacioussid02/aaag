@@ -1,99 +1,200 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+import json
+import logging
 import os
-import anthropic
+from contextlib import asynccontextmanager
 
-app = FastAPI(title="AaaG AI Service", version="1.0.0")
+from anthropic import Anthropic
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
+from pythonjsonlogger import jsonlogger
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+)
+
+# Configure structured JSON logging
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+handler = logging.StreamHandler()
+formatter = jsonlogger.JsonFormatter()
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+
+# Initialize rate limiter
+limiter = Limiter(key_func=get_remote_address)
+
+# Initialize Anthropic client
+client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
 
 class GenerateRequest(BaseModel):
-    recipient_name: str
-    occasion: str
-    theme: str
-    custom_message: str = ""
+    """Request body for content generation."""
+    prompt: str = Field(..., min_length=1, max_length=2000)
+    max_tokens: int = Field(default=1024, ge=1, le=4096)
+
 
 class GenerateResponse(BaseModel):
-    title: str
-    description: str
-    code: str
-    gift_url: str = ""
+    """Response body for content generation."""
+    content: str
+    tokens_used: int
 
-@app.get("/health")
-def health_check():
-    """Health check endpoint."""
-    return {"status": "ok"}
 
-@app.post("/generate", response_model=GenerateResponse)
-def generate_micro_app(request: GenerateRequest):
+@retry(
+    retry=retry_if_exception_type((Exception,)),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+)
+async def call_anthropic_with_retry(prompt: str, max_tokens: int) -> dict:
     """
-    Generate a personalized micro-app using Claude.
+    Call Anthropic API with automatic retry logic.
     
-    Takes recipient details, occasion, theme, and optional custom message,
-    then returns a generated micro-app with title, description, and code.
+    Retries up to 3 times with exponential backoff (2s, 4s, 8s) on any exception.
     """
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
-    
-    client = anthropic.Anthropic(api_key=api_key)
-    
-    # Build prompt for Claude
-    prompt = f"""
-You are a micro-app generator. Create a personalized micro-app gift.
-
-Recipient: {request.recipient_name}
-Occasion: {request.occasion}
-Theme: {request.theme}
-Custom Message: {request.custom_message or "(none)"}
-
-Generate a micro-app with:
-1. A catchy title
-2. A brief description (1-2 sentences)
-3. Simple HTML/CSS/JavaScript code (under 500 chars)
-
-Respond in JSON format:
-{{
-  "title": "...",
-  "description": "...",
-  "code": "..."
-}}
-"""
+    logger.info(
+        "calling_anthropic_api",
+        extra={
+            "prompt_length": len(prompt),
+            "max_tokens": max_tokens,
+        },
+    )
     
     try:
         message = client.messages.create(
             model="claude-3-5-sonnet-20241022",
-            max_tokens=1024,
+            max_tokens=max_tokens,
             messages=[
                 {"role": "user", "content": prompt}
-            ]
+            ],
         )
         
-        # Parse Claude's response
-        response_text = message.content[0].text
-        
-        # Extract JSON from response
-        import json
-        import re
-        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-        if not json_match:
-            raise ValueError("Could not parse JSON from Claude response")
-        
-        parsed = json.loads(json_match.group())
-        
-        return GenerateResponse(
-            title=parsed.get("title", "Untitled Gift"),
-            description=parsed.get("description", "A personalized micro-app gift"),
-            code=parsed.get("code", "<h1>Gift</h1>"),
-            gift_url=""
+        logger.info(
+            "anthropic_api_success",
+            extra={
+                "input_tokens": message.usage.input_tokens,
+                "output_tokens": message.usage.output_tokens,
+            },
         )
-    
-    except anthropic.APIError as e:
-        raise HTTPException(status_code=500, detail=f"Claude API error: {str(e)}")
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=500, detail="Failed to parse Claude response")
+        
+        return {
+            "content": message.content[0].text,
+            "tokens_used": message.usage.output_tokens,
+        }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Generation failed: {str(e)}")
+        logger.error(
+            "anthropic_api_error",
+            extra={
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+            },
+        )
+        raise
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager for startup/shutdown."""
+    logger.info("ai_service_startup")
+    yield
+    logger.info("ai_service_shutdown")
+
+
+app = FastAPI(
+    title="AaaG AI Service",
+    description="Claude-powered content generation for personalized micro-apps",
+    version="0.1.0",
+    lifespan=lifespan,
+)
+
+# Attach rate limiter to app
+app.state.limiter = limiter
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """Middleware to log all HTTP requests and responses."""
+    logger.info(
+        "http_request",
+        extra={
+            "method": request.method,
+            "path": request.url.path,
+            "client": get_remote_address(request),
+        },
+    )
+    
+    response = await call_next(request)
+    
+    logger.info(
+        "http_response",
+        extra={
+            "method": request.method,
+            "path": request.url.path,
+            "status_code": response.status_code,
+        },
+    )
+    
+    return response
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Global exception handler with structured logging."""
+    logger.error(
+        "unhandled_exception",
+        extra={
+            "error_type": type(exc).__name__,
+            "error_message": str(exc),
+            "path": request.url.path,
+        },
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
+
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint."""
+    return {"status": "ok"}
+
+
+@app.post("/generate", response_model=GenerateResponse)
+@limiter.limit("100/minute")
+async def generate(request: Request, body: GenerateRequest) -> GenerateResponse:
+    """
+    Generate content using Claude.
+    
+    Rate limited to 100 requests per minute.
+    Automatically retries on transient failures.
+    """
+    try:
+        result = await call_anthropic_with_retry(
+            prompt=body.prompt,
+            max_tokens=body.max_tokens,
+        )
+        return GenerateResponse(
+            content=result["content"],
+            tokens_used=result["tokens_used"],
+        )
+    except Exception as e:
+        logger.error(
+            "generate_endpoint_error",
+            extra={
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+            },
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to generate content after retries",
+        )
+
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.getenv("PORT", "8000"))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
