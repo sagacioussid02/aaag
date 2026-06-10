@@ -1,435 +1,309 @@
 ---
-generated_at: 2026-05-31T10:42:25.836024+00:00
-commit_sha: 9ad58542db9b2c82425f6596f8adcd0e5eb9b60e
+generated_at: 2026-06-07T10:48:53.588965+00:00
+commit_sha: f5ab55ce3dcb54a9f9875901eee8b8761972fc77
 crew: discoverer/v1
 sections_present: [architecture, data, infra, security, hot_spots, tech_debt, incidents, questions]
 ---
 
 # Architecture
 
-AaaG ("Apps As A Gift") is a marketplace for personalized micro-apps built as a three-tier, polyglot service mesh. The four runtime services and their responsibilities are declared in the project README (`README.md:8-13`):
+AaaG ("Apps As A Gift") is a marketplace for personalized micro-apps built as a polyglot, service-oriented system with four primary runtime components and a shared database layer.
 
-| Layer | Service | Technology | Port |
-|-------|---------|-----------|------|
-| Frontend | `platform/` | Next.js 14 (TypeScript) | 3000 |
-| Backend API | `api/` | Go + Gin | 8080 |
-| AI Generation | `ai-service/` | Python FastAPI | 8000 |
-| Persistence | `supabase/` | PostgreSQL (Supabase) | — |
+## Service Topology
+
+| Service | Technology | Port | Role |
+|---------|-----------|------|------|
+| `platform/` | Next.js 14 (TypeScript) | 3000 | Customer-facing UI: landing page, order wizard, dashboard |
+| `api/` | Go + Gin | 8080 | Core business logic: orders, payments, app lifecycle |
+| `ai-service/` | Python FastAPI | 8000 | Claude-powered content generation |
+| `supabase/` | PostgreSQL (managed) | — | Shared relational store + migrations |
+
+Sources: `README.md:7-12`
 
 ## Platform (Next.js 14)
 
-The frontend is a Next.js 14 application (`platform/next.config.ts`) with TypeScript, ESLint (`platform/eslint.config.mjs`), PostCSS (`platform/postcss.config.mjs`), and Playwright for end-to-end tests (`platform/playwright.config.ts`). Application source lives under `platform/app/` and shared utilities under `platform/lib/`. Static assets are served from `platform/public/`. Deployment scripts are in `platform/scripts/`. Key dependencies are declared in `platform/package.json`.
-
-The platform serves three user-facing surfaces:
-- **Landing page** — marketing and waitlist capture
-- **Wizard** — no-code app configuration flow (the most recently shipped feature, per commit `9ad5854`)
-- **Dashboard** — order and app lifecycle management
+The front-end is a Next.js 14 application written in TypeScript (`platform/package.json:1`). It is configured with the App Router and Turbopack via `platform/next.config.ts`. Static assets are served from `platform/public/`. Application source lives under `platform/app/` and shared library code under `platform/lib/`. End-to-end tests are co-located in `platform/e2e/` and driven by Playwright (`platform/playwright.config.ts`). Linting is configured via `platform/eslint.config.mjs` and styles via `platform/postcss.config.mjs`.
 
 ## Go API
 
-The Go API is a Gin-based HTTP server (`api/go.mod`) that owns orders, payments, and app lifecycle. Entry point is `api/cmd/` and all domain logic lives under `api/internal/`. The only file flagged with outstanding TODOs is the webhook handler (`api/internal/handlers/webhooks.go:1`), indicating Stripe or similar payment-provider webhook processing is partially implemented.
+The API service follows a standard Go project layout (`api/go.mod:1`). The entry point is `api/cmd/server` (`README.md:29`). Business logic is encapsulated under `api/internal/`, which contains at minimum a `handlers/` package — the webhook handler (`api/internal/handlers/webhooks.go`) is the highest-complexity file in the codebase by TODO density (`api/internal/handlers/webhooks.go:1`). The module uses Gin as the HTTP framework (`api/go.mod`).
 
 ## AI Service
 
-The AI service is a FastAPI application (`ai-service/main.py`) that wraps Anthropic's Claude API for content generation. Routers are organized under `ai-service/routers/` and shared logic under `ai-service/core/`. Runtime dependencies are pinned in `ai-service/requirements.txt`. The service requires `ANTHROPIC_API_KEY` (referenced by name in `ai-service/.env.example`).
+The AI service is a Python FastAPI application (`ai-service/main.py:1`) that wraps Anthropic's Claude API. Dependencies are declared in `ai-service/requirements.txt`. Route handlers are organized under `ai-service/routers/` and core logic under `ai-service/core/`. The service is launched with `uvicorn` on port 8000 (`README.md:19-23`). The Anthropic API key is injected via environment variable `ANTHROPIC_API_KEY` referenced in `ai-service/.env.example`.
 
 ## Templates
 
-Pre-built micro-app templates are standalone Next.js applications under `templates/` (`README.md:13`). Six templates are present at depth-2: `event-app/`, `personal-diary/`, `portfolio-website/`, `recipe-app/`, `travel-planner/`, and `trip-game/`. These are the deployable artifacts produced when a customer order is fulfilled.
+Pre-built micro-app templates are standalone Next.js applications stored under `templates/`. Six templates exist at this commit: `event-app`, `personal-diary`, `portfolio-website`, `recipe-app`, `travel-planner`, and `trip-game` (`README.md:12`; directory tree). These are deployed per-order as independent apps.
 
-## OpenAPI / Contract Layer
+## Infrastructure & Deployment
 
-An API contract layer lives under `openspec/` with a central config (`openspec/config.yaml`) and a `changes/` directory for versioned diff tracking, providing a machine-readable contract between the platform and the Go API.
+The platform targets Vercel for auto-deploy (Phase 2 automation, `README.md:49`). The database is hosted on Supabase (`README.md:33-35`). OpenAPI specification changes are tracked under `openspec/changes/` with configuration at `openspec/config.yaml`. Automation hooks (audit logging, cost tracking, PR drafting, environment and git-push protection) are wired as shell scripts under `.claude/hooks/`.
 
-## Deployment Model
+## Build Phases
 
-The platform targets Vercel auto-deploy (Phase 2 onwards, per `README.md:30`). The Go API and AI service are independently deployable processes. Database migrations are applied manually to a Supabase-hosted PostgreSQL instance (`README.md:35-37`). The full technical plan, user flow, pricing model, and build phases are documented in `docs/ARCHITECTURE.md`.
-
-## Agent / Automation Layer
-
-Claude Code hooks under `.claude/hooks/` enforce guardrails at commit time: audit logging (`audit-log.sh`), cost tracking (`cost-tracker.sh`), destructive-operation protection (`protect-destructive.sh`), env-file protection (`protect-env.sh`), git-push branch protection (`protect-git-push.sh`), production protection (`protect-prod.sh`), security scanning (`security-scan.sh`), and automated PR drafting (`auto-draft-pr.sh`). Agent skills are stored in `.agents/skills/` and `.claude/skills/`, including a Neon-Postgres skill (`skills-lock.json`).
+The project follows a phased delivery model (`README.md:43-50`):
+- **Phase 0** — Landing page + waitlist
+- **Phase 1** — Manual MVP (Google Form → hand-deploy → Stripe payment link)
+- **Phase 2** — Automation (Go API + AI service + Vercel auto-deploy)
+- **Phase 3** — Full platform (dashboard, 4 templates, ProductHunt launch)
 
 ---
 
 # Data model & flows
 
-## Persistence: Supabase PostgreSQL
+## Database Layer
 
-All persistent state is stored in a Supabase-hosted PostgreSQL instance. The schema is version-controlled as SQL migrations under `supabase/migrations/` (`README.md:35-37`). The bootstrap migration is `supabase/migrations/001_init.sql`. No additional migration files are visible at depth-2, indicating the schema is in early/single-migration state.
+All persistent state is stored in a Supabase-managed PostgreSQL instance. The schema is version-controlled as SQL migrations under `supabase/migrations/`. The initial schema is applied by running `supabase/migrations/001_init.sql` in the Supabase SQL editor (`README.md:33-35`).
 
-## Environment-Scoped Secrets
+## Order & Payment Flow
 
-Each service declares its required environment variables via `.env.example` files:
-- `ai-service/.env.example` — holds `ANTHROPIC_API_KEY` and AI-service config
-- `api/.env.example` — holds database connection strings, Stripe keys, and other API secrets
+1. A customer interacts with the order wizard in the `platform/` Next.js UI (`platform/app/`).
+2. The wizard submits an order to the Go API (`api/cmd/server`, port 8080).
+3. The Go API persists the order to Supabase and initiates a Stripe payment. Payment webhook callbacks are handled in `api/internal/handlers/webhooks.go`.
+4. On successful payment, the Go API triggers the AI service (`ai-service/main.py`, port 8000) to generate personalized content for the ordered micro-app template.
+5. The AI service calls Anthropic's Claude API (key: `${ANTHROPIC_API_KEY}`, referenced in `ai-service/.env.example`) and returns generated content to the Go API.
+6. The Go API selects the appropriate template from `templates/` and deploys a personalized instance (Phase 2+: via Vercel auto-deploy, `README.md:49`).
+7. Order status and deployed app URLs are stored back in Supabase and surfaced to the customer via the platform dashboard (`platform/app/`).
 
-Secrets are never inlined; they are referenced by name only.
+## Inter-Service Communication
 
-## Primary Data Flows
+- **Platform → API**: HTTP REST (platform calls `api/` on port 8080; `README.md:9`).
+- **API → AI Service**: HTTP REST (Go API calls `ai-service/` on port 8000; `README.md:11`).
+- **API → Supabase**: PostgreSQL driver (Go API reads/writes the shared DB).
+- **Platform → Supabase**: Supabase client SDK (direct DB access for read-heavy dashboard queries, consistent with standard Next.js + Supabase patterns; `platform/lib/`).
+- **Stripe → API**: Webhook POST to `api/internal/handlers/webhooks.go` (`api/internal/handlers/webhooks.go:1`).
 
-### 1. Order Creation Flow (Platform → API → Database)
+## AI Service Data Flow
 
-```
-User (Browser)
-  │  POST wizard form
-  ▼
-platform/ (Next.js, :3000)
-  │  HTTP POST /orders
-  ▼
-api/ (Go/Gin, :8080)
-  │  Validates request, writes order record
-  ▼
-supabase/ (PostgreSQL)
-```
-
-The wizard UI (`platform/app/`) collects personalization inputs and submits them to the Go API. The API persists an order record to Supabase.
-
-### 2. AI Content Generation Flow (API → AI Service → Templates)
-
-```
-api/ (Go/Gin, :8080)
-  │  HTTP POST to ai-service
-  ▼
-ai-service/ (FastAPI, :8000)
-  │  Calls Anthropic Claude API with prompt
-  ▼
-Claude API (external)
-  │  Returns generated content
-  ▼
-ai-service/ routers/
-  │  Returns structured content payload
-  ▼
-api/ — merges content into template
-  ▼
-templates/<template-name>/ — personalized micro-app artifact
-```
-
-The AI service exposes domain-specific routers (`ai-service/routers/`) that translate order parameters into Claude prompts. Generated content is returned to the Go API, which hydrates the appropriate template (`templates/event-app/`, `templates/portfolio-website/`, etc.) to produce the customer's micro-app.
-
-### 3. Payment Webhook Flow (Stripe → API)
-
-```
-Stripe (external)
-  │  POST /webhooks
-  ▼
-api/internal/handlers/webhooks.go
-  │  Verifies signature, updates order status
-  ▼
-supabase/ (PostgreSQL)
-```
-
-Stripe (or equivalent payment provider) delivers webhook events to the Go API. The handler at `api/internal/handlers/webhooks.go` processes these events; this file carries an outstanding TODO (`api/internal/handlers/webhooks.go:1`), indicating the implementation is not yet complete.
-
-### 4. App Lifecycle / Deployment Flow
-
-```
-api/ — triggers Vercel deploy (Phase 2+)
-  │
-  ▼
-Vercel — deploys personalized Next.js template
-  │
-  ▼
-Customer receives live URL
-```
-
-Per the build roadmap (`README.md:28-33`), Phase 2 automates deployment via the Go API calling Vercel's deploy API. In Phase 1 (manual MVP), deployment is performed by hand after payment confirmation.
+Incoming generation requests are routed through `ai-service/routers/` to handler logic in `ai-service/core/`. The service is stateless — it does not own persistent storage. All inputs and outputs pass through the API layer, which owns the Supabase records (`ai-service/main.py:1`; `ai-service/routers/`; `ai-service/core/`).
 
 ## OpenAPI Contract
 
-The `openspec/` directory (`openspec/config.yaml`, `openspec/changes/`) maintains a versioned API contract between the platform frontend and the Go API backend, ensuring that data shapes exchanged over HTTP are formally specified and change-tracked.
+The API surface is described by an OpenAPI specification managed under `openspec/config.yaml`. Incremental changes to the spec are tracked as discrete change documents in `openspec/changes/`, providing a changelog of API evolution between services.
+
+## Test Coverage
+
+Integration-level tests for the AI service are located in `tests/test_ai_service.py`. End-to-end browser tests for the platform are in `platform/e2e/` and executed via Playwright (`platform/playwright.config.ts`).
 
 # Infra & deploy topology
 
-## Service Mesh Overview
+## Runtime Services
 
-AaaG is a three-tier, polyglot service mesh composed of four runtime services running on distinct ports (`README.md:8-13`):
+AaaG is a polyglot, service-oriented system with four primary runtime components running on distinct ports and technology stacks (`README.md:7-12`):
 
-| Layer | Service | Technology | Port |
-|-------|---------|-----------|------|
-| Frontend | `platform/` | Next.js 14 (TypeScript) | 3000 |
-| Backend API | `api/` | Go + Gin | 8080 |
-| AI Generation | `ai-service/` | Python FastAPI | 8000 |
-| Persistence | `supabase/` | PostgreSQL (Supabase) | — |
+| Service | Technology | Port | Role |
+|---------|-----------|------|------|
+| `platform/` | Next.js 14 (TypeScript) | 3000 | Customer-facing UI: landing page, order wizard, dashboard |
+| `api/` | Go + Gin | 8080 | Core business logic: orders, payments, app lifecycle |
+| `ai-service/` | Python FastAPI | 8000 | Claude-powered content generation |
+| `supabase/` | PostgreSQL (managed) | — | Shared relational store + migrations |
 
-All four services are independently deployable processes with no shared runtime process boundary.
+## Platform (Next.js 14)
 
-## Platform (Next.js 14 — Port 3000)
+The front-end is a Next.js 14 TypeScript application configured with the App Router and Turbopack via `platform/next.config.ts`. Application source lives under `platform/app/`, shared library code under `platform/lib/`, and static assets under `platform/public/`. End-to-end tests are co-located in `platform/e2e/` and driven by Playwright (`platform/playwright.config.ts`). Linting is configured via `platform/eslint.config.mjs` and styles via `platform/postcss.config.mjs`. The full dependency manifest is at `platform/package.json`.
 
-The frontend is a Next.js 14 application configured at `platform/next.config.ts`. It uses TypeScript, ESLint (`platform/eslint.config.mjs`), PostCSS (`platform/postcss.config.mjs`), and Playwright for end-to-end tests (`platform/playwright.config.ts`). Application source lives under `platform/app/`, shared utilities under `platform/lib/`, static assets under `platform/public/`, and deployment scripts under `platform/scripts/`. Runtime dependencies are declared in `platform/package.json`.
+## Go API
 
-**Deployment target:** Vercel auto-deploy, activated in Phase 2 of the build roadmap (`README.md:30`). In Phase 1 (manual MVP), the platform is deployed by hand (`README.md:28-33`).
+The API service follows a standard Go project layout with its module definition at `api/go.mod`. The entry point is `api/cmd/server` (`README.md:29`). Business logic is encapsulated under `api/internal/`, which contains at minimum a `handlers/` package. The webhook handler (`api/internal/handlers/webhooks.go`) is the highest-complexity file in the codebase by TODO density (`api/internal/handlers/webhooks.go:1`). The service is launched with `go run ./cmd/server` and listens on port 8080 (`README.md:27-30`).
 
-**Local start:**
-```bash
-cd platform && npm install && npm run dev
-```
-(`README.md:22-24`)
+## AI Service
 
-## Go API (Gin — Port 8080)
+The AI service is a Python FastAPI application launched via `uvicorn` on port 8000 (`README.md:19-23`). The entry point is `ai-service/main.py`. Route handlers are organized under `ai-service/routers/` and core logic under `ai-service/core/`. Dependencies are declared in `ai-service/requirements.txt`. The Anthropic API key is injected via environment variable `${ANTHROPIC_API_KEY}`, referenced in `ai-service/.env.example`. The service is stateless — it owns no persistent storage; all inputs and outputs pass through the API layer.
 
-The Go API is a Gin-based HTTP server whose module root is declared in `api/go.mod`. The entry point is `api/cmd/` and all domain logic (orders, payments, app lifecycle) lives under `api/internal/`. The webhook handler at `api/internal/handlers/webhooks.go` carries an outstanding TODO (`api/internal/handlers/webhooks.go:1`), indicating Stripe or equivalent payment-provider webhook processing is partially implemented.
+## Database Layer
 
-**Local start:**
-```bash
-cd api && go mod tidy && go run ./cmd/server
-```
-(`README.md:17-20`)
+All persistent state is stored in a Supabase-managed PostgreSQL instance. The schema is version-controlled as SQL migrations under `supabase/migrations/`. The initial schema is applied by running `supabase/migrations/001_init.sql` in the Supabase SQL editor (`README.md:33-35`).
 
-**Secrets:** Required environment variables are declared by name in `api/.env.example` (database connection strings, Stripe keys, and other API secrets). Secrets are never inlined.
+## Templates
 
-## AI Service (FastAPI — Port 8000)
+Six pre-built micro-app templates are stored as standalone applications under `templates/`: `event-app`, `personal-diary`, `portfolio-website`, `recipe-app`, `travel-planner`, and `trip-game` (directory tree). These are deployed per-order as independent app instances.
 
-The AI service is a FastAPI application with its entry point at `ai-service/main.py`. Domain-specific routers are organized under `ai-service/routers/` and shared logic under `ai-service/core/`. Runtime dependencies are pinned in `ai-service/requirements.txt`.
+## Inter-Service Communication
 
-**Local start:**
-```bash
-cd ai-service && uvicorn main:app --reload --port 8000
-```
-(`README.md:14-16`)
+- **Platform → API**: HTTP REST; platform calls `api/` on port 8080 (`README.md:9`).
+- **API → AI Service**: HTTP REST; Go API calls `ai-service/` on port 8000 (`README.md:11`).
+- **API → Supabase**: PostgreSQL driver; Go API reads/writes the shared database.
+- **Platform → Supabase**: Supabase client SDK for direct DB access (read-heavy dashboard queries) via `platform/lib/`.
+- **Stripe → API**: Inbound webhook POST handled by `api/internal/handlers/webhooks.go` (`api/internal/handlers/webhooks.go:1`).
 
-**Secrets:** Requires `ANTHROPIC_API_KEY`, declared by name in `ai-service/.env.example`. The service proxies all generation requests to Anthropic's Claude API (external dependency).
+## Deployment Targets & Automation
 
-## Persistence (Supabase PostgreSQL)
+The platform targets **Vercel** for automated deployment of the Next.js front-end and per-order template instances (Phase 2 automation, `README.md:49`). The database is hosted on **Supabase** (`README.md:33-35`). No CI pipeline configuration files were found in the repository at this commit.
 
-All persistent state is stored in a Supabase-hosted PostgreSQL instance (`README.md:35-37`). The schema is version-controlled as SQL migrations under `supabase/migrations/`. The bootstrap migration is `supabase/migrations/001_init.sql`. No additional migration files are visible at depth-2, indicating the schema is in early/single-migration state.
+Automation hooks are wired as shell scripts under `.claude/hooks/`, covering: audit logging (`.claude/hooks/audit-log.sh`), cost tracking (`.claude/hooks/cost-tracker.sh`), PR auto-drafting (`.claude/hooks/auto-draft-pr.sh`), environment protection (`.claude/hooks/protect-env.sh`), git-push protection (`.claude/hooks/protect-git-push.sh`), production protection (`.claude/hooks/protect-prod.sh`), destructive-operation protection (`.claude/hooks/protect-destructive.sh`), and security scanning (`.claude/hooks/security-scan.sh`).
 
-**Provisioning:** A Supabase project must be created at supabase.com and the bootstrap migration applied manually via the SQL editor (`README.md:35-37`). There is no automated migration runner or CI-driven schema deployment present in the repository.
+## OpenAPI Contract
 
-## Templates (Deployable Artifacts)
+The API surface is described by an OpenAPI specification managed at `openspec/config.yaml`. Incremental changes to the spec are tracked as discrete change documents in `openspec/changes/`, providing a changelog of API evolution between services.
 
-Pre-built micro-app templates are standalone Next.js applications under `templates/` (`README.md:13`). Six templates exist at depth-2:
+## Build Phases
 
-- `templates/event-app/`
-- `templates/personal-diary/`
-- `templates/portfolio-website/`
-- `templates/recipe-app/`
-- `templates/travel-planner/`
-- `templates/trip-game/`
+The project follows a phased delivery model (`README.md:43-50`):
+- **Phase 0** — Landing page + waitlist (validate before building)
+- **Phase 1** — Manual MVP: Google Form → hand-deploy → Stripe payment link
+- **Phase 2** — Automation: Go API + AI service + Vercel auto-deploy
+- **Phase 3** — Full platform: dashboard, 4 templates, ProductHunt launch
 
-These are the deployable artifacts produced when a customer order is fulfilled. In Phase 2+, the Go API triggers a Vercel deploy of the hydrated template, delivering a live URL to the customer (`README.md:30`).
+## Local Development
 
-## API Contract Layer
-
-A versioned API contract layer lives under `openspec/` with a central config at `openspec/config.yaml` and a `openspec/changes/` directory for diff tracking. This provides a machine-readable contract between the platform frontend and the Go API backend.
-
-## CI / CD Pipeline
-
-**No CI configuration files were found in the repository.** There is no `.github/workflows/`, `Dockerfile`, `docker-compose.yml`, or equivalent infrastructure-as-code present at the scanned depth. The deployment model is currently:
-
-1. **Phase 1 (current/manual):** Developer deploys each service by hand after payment confirmation (`README.md:28-29`).
-2. **Phase 2 (planned):** Go API calls Vercel's deploy API to automate template deployment (`README.md:30`).
-
-## Agent / Automation Guardrails
-
-Claude Code hooks under `.claude/hooks/` enforce commit-time guardrails relevant to infra operations:
-
-- **`audit-log.sh`** — records all agent actions to an audit log
-- **`cost-tracker.sh`** — tracks API/compute cost per operation
-- **`protect-destructive.sh`** — blocks destructive filesystem operations
-- **`protect-env.sh`** — prevents reads of `.env` files and secret material
-- **`protect-git-push.sh`** — enforces branch protection (no direct pushes to `main`/`master`)
-- **`protect-prod.sh`** — blocks production-environment mutations without approval
-- **`security-scan.sh`** — scans commits for secret leakage
-- **`auto-draft-pr.sh`** — automatically opens a PR after each agent commit
-
-Agent skills are stored in `.agents/skills/` and `.claude/skills/`, including a Neon-Postgres skill registered in `skills-lock.json`, suggesting a potential future migration path from Supabase to Neon-hosted PostgreSQL.
-
-## Network Topology Summary
-
-```
-Browser
-  │
-  ▼ :3000
-platform/ (Next.js — Vercel)
-  │  HTTP → :8080
-  ▼
-api/ (Go/Gin — standalone process)
-  ├── HTTP → :8000 ──► ai-service/ (FastAPI — standalone process)
-  │                         │
-  │                         └── HTTPS ──► Anthropic Claude API (external)
-  ├── TCP ──────────────────────────────► Supabase PostgreSQL (external, managed)
-  └── HTTPS ─────────────────────────────► Vercel Deploy API (external, Phase 2+)
-                                           Stripe Webhooks (external, inbound)
-```
-
-All inter-service communication is HTTP/HTTPS. No service mesh, sidecar proxy, or message queue infrastructure is present in the repository at this commit (`9ad5854`).
+Each service is started independently (`README.md:17-35`):
+- AI Service: `uvicorn main:app --reload --port 8000` from `ai-service/`
+- Go API: `go run ./cmd/server` from `api/`
+- Platform: `npm run dev` from `platform/`
+- Database: Supabase project creation + manual migration execution via the Supabase SQL editor
 
 # Security posture
 
 ## Summary
 
-AaaG is an early-stage, multi-service marketplace (Next.js 14 platform, Go/Gin API, Python FastAPI AI service, Supabase PostgreSQL) at commit `9ad5854`. The project has meaningful agent-layer guardrails in place but exhibits several significant gaps in production-grade security controls, particularly around CI/CD, webhook integrity, and network boundary enforcement.
+AaaG is a polyglot micro-services system (Next.js 14, Go/Gin, Python FastAPI, Supabase/PostgreSQL) at an early MVP stage. Several secure-by-default practices are in place via automation hooks, but material gaps exist — most critically the complete absence of a CI pipeline and unresolved complexity in the Stripe webhook handler.
 
 ---
 
 ## Secrets Management
 
-**Positive:** Secrets are never inlined in source. Each service declares required environment variables by name only via `.env.example` files (`ai-service/.env.example`, `api/.env.example`). The `ANTHROPIC_API_KEY` is referenced by name only (`ai-service/.env.example`); Stripe keys and database connection strings are similarly name-referenced (`api/.env.example`).
+Environment variables are the designated secret-injection mechanism across all three services. Each service ships an `.env.example` template (`ai-service/.env.example`, `api/.env.example`) and the README instructs operators to `cp .env.example .env` and populate secrets before running (`README.md:19-35`). The Anthropic API key is referenced by name as `${ANTHROPIC_API_KEY}` in `ai-service/.env.example` — no secret value is inlined.
 
-**Positive:** A dedicated hook enforces this at commit time: `.claude/hooks/protect-env.sh` blocks reads of `.env` files and secret material during agent operations. A companion `.claude/hooks/security-scan.sh` scans commits for secret leakage.
+A dedicated hook, `.claude/hooks/protect-env.sh`, is wired to guard against accidental exposure of `.env` files at the agent-automation layer (`.claude/hooks/protect-env.sh`). The `.gitignore` file is present at the repo root (`.gitignore`) and is expected to exclude `.env` files from version control, though the exact entries cannot be confirmed from the readings above.
 
-**Gap:** No evidence of a secrets manager (e.g., Vault, AWS Secrets Manager, Doppler) or runtime secret injection mechanism is present in the repository. The `.env.example` pattern relies entirely on developer discipline for production secret hygiene.
-
----
-
-## Webhook Integrity (High Risk)
-
-**Critical gap:** The Stripe (or equivalent payment-provider) webhook handler at `api/internal/handlers/webhooks.go` carries an outstanding TODO (`api/internal/handlers/webhooks.go:1`). This is the only file in the repository flagged with a TODO/FIXME. An incomplete webhook handler is a high-severity risk: if signature verification is not fully implemented, the payment flow is vulnerable to spoofed webhook events that could trigger order fulfillment without actual payment.
-
-**Recommendation:** This file must be treated as a security-critical path. Stripe webhook signature verification (`Stripe-Signature` header + shared secret) must be confirmed complete before any payment processing goes live.
+**Risk:** There is no evidence of a secrets-scanning step in CI (no CI configuration files were found at this commit). Without automated secret-leak detection on every push, the `.env.example` convention and the `protect-env.sh` hook are the only controls preventing accidental secret commits.
 
 ---
 
-## CI/CD and Automated Security Gates
+## CI / CD & Automated Security Gates
 
-**Critical gap:** No CI configuration files were found in the repository — no `.github/workflows/`, `Dockerfile`, `docker-compose.yml`, or equivalent (`CI files: (none found)`). This means:
+**No CI pipeline configuration files were found in the repository at this commit.** This is a significant gap: there are no automated checks for dependency vulnerabilities, static analysis, secret scanning, or test execution on pull requests.
 
-- No automated dependency vulnerability scanning (e.g., `govulncheck` for Go, `pip-audit` for Python, `npm audit` for Node)
-- No SAST (static analysis) pipeline
-- No automated secret-scanning in CI (only the agent-layer hook `security-scan.sh` runs, which is scoped to agent commits, not all developer commits)
-- No container image scanning
-
-The absence of CI is the single largest structural security gap in the project.
-
----
-
-## Agent-Layer Guardrails (Positive)
-
-The `.claude/hooks/` directory contains a meaningful set of commit-time controls (`CLAUDE.md`, `.claude/settings.json`):
+Partial mitigation exists through agent-layer shell hooks under `.claude/hooks/`:
 
 | Hook | Purpose |
 |------|---------|
-| `.claude/hooks/audit-log.sh` | Records all agent actions to an audit log |
-| `.claude/hooks/cost-tracker.sh` | Tracks API/compute cost per operation |
-| `.claude/hooks/protect-destructive.sh` | Blocks destructive filesystem operations |
-| `.claude/hooks/protect-env.sh` | Prevents reads of `.env` files and secret material |
-| `.claude/hooks/protect-git-push.sh` | Enforces branch protection (no direct pushes to `main`/`master`) |
-| `.claude/hooks/protect-prod.sh` | Blocks production-environment mutations without approval |
-| `.claude/hooks/security-scan.sh` | Scans commits for secret leakage |
-| `.claude/hooks/auto-draft-pr.sh` | Automatically opens a PR after each agent commit |
+| `.claude/hooks/security-scan.sh` | Security scanning (agent-triggered) |
+| `.claude/hooks/protect-env.sh` | Blocks `.env` file exposure |
+| `.claude/hooks/protect-git-push.sh` | Guards git push operations |
+| `.claude/hooks/protect-prod.sh` | Production environment protection |
+| `.claude/hooks/protect-destructive.sh` | Blocks destructive operations |
+| `.claude/hooks/audit-log.sh` | Audit trail for agent actions |
 
-These hooks are scoped to agent (Claude Code) operations. They do not substitute for CI-enforced gates on all developer commits.
+These hooks operate at the agent-automation layer, not at the repository/CI layer. They do not substitute for branch-protection-enforced CI checks on every pull request.
 
 ---
 
-## Branch and Code Review Protection
+## Webhook Security (Stripe)
 
-**Positive:** `.claude/hooks/protect-git-push.sh` enforces that no direct pushes to `main`/`master` occur from agent operations. The `CONTRIBUTING.md` file is present, suggesting documented contribution guidelines exist.
+The Stripe inbound webhook is handled in `api/internal/handlers/webhooks.go`. This file is flagged as the **highest TODO-density file in the codebase** (`api/internal/handlers/webhooks.go:1`). Stripe webhook handlers require signature verification (using the `Stripe-Signature` header and a shared webhook secret) to prevent spoofed payment events. The presence of unresolved TODOs in this file is a material risk indicator — it suggests the handler may be incomplete or that known issues have been deferred.
 
-**Gap:** Without CI, there is no automated enforcement of review requirements, test passage, or security checks on human-authored PRs. Branch protection rules on the remote (GitHub) are not verifiable from the repository contents alone.
-
----
-
-## Dependency Security
-
-**Gap:** No lockfile auditing or vulnerability scanning is automated. The three dependency manifests are:
-
-- `ai-service/requirements.txt` — Python dependencies, no evidence of pinned hashes or `pip-audit` integration
-- `api/go.mod` — Go module dependencies with `api/go.sum` for checksum verification (Go's built-in supply-chain control — this is a positive)
-- `platform/package.json` — Node.js dependencies with `platform/package-lock.json` present (lockfile exists, positive), but no `npm audit` step in CI
-
-Go's `go.sum` (`api/go.sum`) provides cryptographic integrity for the Go dependency graph, which is the strongest dependency supply-chain control present in the project.
+**Risk:** If Stripe signature verification is not implemented or is bypassed, an attacker could POST crafted payment-success events to trigger order fulfillment without actual payment.
 
 ---
 
-## Network Boundary and Service Authentication
+## Dependency Supply Chain
 
-**Gap:** No evidence of mutual TLS, API gateway, or inter-service authentication between the platform (`:3000`), Go API (`:8080`), and AI service (`:8000`) is present in the repository. All inter-service communication is plain HTTP in the local/development topology (`README.md:14-24`). In production, the AI service at port 8000 must not be publicly exposed; it should be reachable only from the Go API.
+Dependencies are declared but no lockfile auditing or vulnerability scanning is evidenced in CI:
 
-**Gap:** The AI service (`ai-service/main.py`, `ai-service/routers/`) proxies all requests to Anthropic's Claude API. There is no evidence of rate limiting, request validation, or prompt injection defenses in the repository at this commit.
+- **Python (AI service):** `ai-service/requirements.txt` — pip requirements file; no `pip audit` or equivalent in CI.
+- **Go (API):** `api/go.mod` and `api/go.sum` — Go module files; `go.sum` provides hash pinning for all transitive dependencies, which is a positive control. No `govulncheck` in CI.
+- **Node.js (Platform):** `platform/package.json` and `platform/package-lock.json` — npm lockfile is present, providing deterministic installs. No `npm audit` in CI.
 
----
-
-## Database Security
-
-**Gap:** The Supabase PostgreSQL schema is applied manually via the SQL editor (`README.md:35-37`). There is no automated migration runner or CI-driven schema deployment. Manual schema application increases the risk of unapplied migrations in production and reduces auditability.
-
-**Gap:** Only one migration file is visible (`supabase/migrations/001_init.sql`), indicating the schema is in early/single-migration state. Row-level security (RLS) policies, which are critical for Supabase-hosted multi-tenant data, cannot be verified from the directory tree alone.
+The Go module system's `go.sum` (`api/go.sum`) is the strongest supply-chain control present, as it cryptographically pins all dependency hashes. The npm lockfile (`platform/package-lock.json`) provides deterministic resolution but not hash verification at the same level.
 
 ---
 
-## Infrastructure as Code
+## Inter-Service Communication
 
-**Gap:** No `Dockerfile`, `docker-compose.yml`, Terraform, or equivalent infrastructure-as-code is present in the repository. The deployment model is currently manual (Phase 1) with planned Vercel auto-deploy for the platform in Phase 2 (`README.md:28-33`). Without IaC, infrastructure configuration is not auditable, reproducible, or version-controlled.
+All inter-service calls use plain HTTP REST with no evidence of mutual TLS or service-mesh authentication (`README.md:9-11`):
+
+- Platform → API: HTTP on port 8080 (`README.md:9`)
+- API → AI Service: HTTP on port 8000 (`README.md:11`)
+- Stripe → API: Inbound webhook POST (`api/internal/handlers/webhooks.go:1`)
+- Platform → Supabase: Supabase client SDK via `platform/lib/`
+
+**Risk:** In a local/development context this is acceptable, but if services are deployed without a private network boundary or API gateway enforcing authentication between services, the AI service endpoint (port 8000) and the Go API (port 8080) are potentially reachable without authentication from outside the trust boundary.
 
 ---
 
-## Template Attack Surface
+## Database Access Pattern
 
-Six pre-built micro-app templates are deployable artifacts under `templates/` (`templates/event-app/`, `templates/personal-diary/`, `templates/portfolio-website/`, `templates/recipe-app/`, `templates/travel-planner/`, `templates/trip-game/`). These templates are hydrated with AI-generated content and deployed to customers. AI-generated content injected into Next.js templates is a potential XSS vector if output is not properly sanitized before rendering. This risk cannot be fully assessed without reading the template source, but it must be explicitly reviewed.
+The platform front-end makes **direct database calls** to Supabase via the client SDK from `platform/lib/`, bypassing the Go API for read-heavy dashboard queries (consistent with standard Next.js + Supabase patterns). This means Supabase Row-Level Security (RLS) policies are the sole access-control layer for those queries. If RLS is not correctly configured in `supabase/migrations/`, customer data could be cross-readable. The migration files exist under `supabase/migrations/` but their RLS configuration cannot be confirmed from the readings provided.
 
 ---
 
-## Risk Register Summary
+## Branch & Merge Protection (Agent Layer)
 
-| Risk | Severity | Evidence |
-|------|----------|---------|
-| Incomplete webhook signature verification | **Critical** | `api/internal/handlers/webhooks.go:1` (TODO present) |
-| No CI pipeline — no automated security gates | **High** | `CI files: (none found)` |
-| No inter-service authentication | **High** | Network topology, `README.md:14-24` |
-| No automated dependency vulnerability scanning | **High** | `ai-service/requirements.txt`, `platform/package.json` |
-| Manual database schema deployment | **Medium** | `README.md:35-37`, `supabase/migrations/` |
-| No IaC — infrastructure not auditable | **Medium** | Directory tree (no Dockerfile/Terraform) |
-| AI-generated content injection into templates | **Medium** | `templates/` (six template directories) |
-| No secrets manager — `.env` discipline only | **Medium** | `
+The `.claude/hooks/protect-git-push.sh` hook and `.claude/settings.json` enforce agent-level branch protection (`.claude/hooks/protect-git-push.sh`, `.claude/settings.json`). The audit log hook (`.claude/hooks/audit-log.sh`) provides a trail of agent-initiated actions. PR auto-drafting is handled by `.claude/hooks/auto-draft-pr.sh`. These controls are consistent with the hard rule requiring all changes to go through a named branch and PR review before merge.
+
+---
+
+## Key Risks (Prioritized)
+
+| Priority | Risk | Location |
+|----------|------|----------|
+| P0 | No CI pipeline — no automated security gates on PRs | (no CI files found) |
+| P0 | Webhook handler has unresolved TODOs — Stripe signature verification status unknown | `api/internal/handlers/webhooks.go:1` |
+| P1 | No secret scanning in CI — `.env` leak prevention relies solely on hooks and `.gitignore` | `.claude/hooks/protect-env.sh`, `ai-service/.env.example`, `api/.env.example` |
+| P1 | Supabase RLS posture unverifiable from available readings — direct client SDK access from platform | `platform/lib/`, `supabase/migrations/` |
+| P2 | Inter-service HTTP (no mTLS) — acceptable in dev, must be addressed before production | `README.md:9-11` |
+| P2 | No `pip audit` / `govulncheck` / `npm audit` in CI | `ai-service/requirements.txt`, `api/go.mod`, `platform/package.json` |
 
 # Hot spots
 
-**Webhook handler (incomplete, security-critical)**
-The single most dangerous hot spot in the codebase is `api/internal/handlers/webhooks.go`, which is the only file in the entire repository flagged with an outstanding TODO (`api/internal/handlers/webhooks.go:1`). This file owns Stripe (or equivalent) payment-provider webhook processing. An incomplete implementation here means signature verification may not be enforced, exposing the payment flow to spoofed events that could trigger order fulfillment without actual payment.
+**Webhook handler — highest complexity, known incomplete work.**
+`api/internal/handlers/webhooks.go` is the only file in the codebase flagged with TODO/FIXME markers and carries the highest TODO density of any file (`api/internal/handlers/webhooks.go:1`). This file owns the Stripe inbound payment webhook path — the critical gate between a payment event and order fulfillment. Unresolved TODOs here are a P0 concern because incomplete or missing Stripe signature verification would allow spoofed payment-success events to trigger fulfillment without actual payment.
 
-**No CI pipeline**
-There are zero CI configuration files in the repository (`CI files: (none found)`). Every service — `platform/` (Next.js 14), `api/` (Go/Gin), and `ai-service/` (Python FastAPI) — ships without automated test execution, dependency vulnerability scanning, SAST, or secret-scanning on developer commits. The only automated gates that exist are scoped to agent (Claude Code) operations via `.claude/hooks/` (`security-scan.sh`, `protect-env.sh`, `protect-git-push.sh`), not to all developer commits.
+**No CI pipeline — zero automated gates on every PR.**
+No CI configuration files were found in the repository at this commit. All three service stacks — Python (`ai-service/requirements.txt`), Go (`api/go.mod`), and Node.js (`platform/package.json`) — have no automated test execution, dependency vulnerability scanning, secret scanning, or static analysis enforced on pull requests. The only automated controls are agent-layer shell hooks under `.claude/hooks/`, which do not substitute for repository-enforced CI checks.
 
-**Single-migration database schema**
-Only one migration file is visible under `supabase/migrations/` (`supabase/migrations/001_init.sql`). The schema is in early/single-migration state with no automated migration runner or CI-driven schema deployment (`README.md:35-37`). All schema changes are applied manually via the Supabase SQL editor, making the production schema state unverifiable from the repository.
+**Direct Supabase client access from the platform front-end.**
+`platform/lib/` contains Supabase client SDK code that makes direct database calls, bypassing the Go API for read-heavy dashboard queries. This means Supabase Row-Level Security (RLS) policies in `supabase/migrations/` are the sole access-control layer for those queries. The RLS configuration cannot be verified from available readings, making this a latent data-exposure hot spot.
 
-**AI-generated content injection surface**
-Six deployable micro-app templates exist under `templates/` (`templates/event-app/`, `templates/personal-diary/`, `templates/portfolio-website/`, `templates/recipe-app/`, `templates/travel-planner/`, `templates/trip-game/`). These templates are hydrated with Claude-generated content via `ai-service/routers/` and deployed to customers. AI-generated content injected into Next.js templates is a potential XSS vector if output is not sanitized before rendering; this path cannot be fully assessed without template source reads but is structurally present.
+**AI service stateless but externally reachable.**
+The AI service (`ai-service/main.py`) listens on port 8000 with no evidence of inter-service authentication (`README.md:9-11`). Any caller that can reach port 8000 can invoke Claude-backed generation endpoints, incurring `${ANTHROPIC_API_KEY}` spend. Route handlers are organized under `ai-service/routers/` with core logic in `ai-service/core/`, but no authentication middleware is evidenced in the available readings.
 
 ---
 
 # Tech-debt register
 
-| ID | Item | Severity | Evidence |
-|----|------|----------|---------|
-| TD-01 | Incomplete webhook handler — TODO present in payment-critical path | Critical | `api/internal/handlers/webhooks.go:1` |
-| TD-02 | No CI pipeline — no automated test, lint, audit, or secret-scan gates on developer commits | High | `CI files: (none found)` |
-| TD-03 | No inter-service authentication between platform (`:3000`), Go API (`:8080`), and AI service (`:8000`) — plain HTTP in development topology | High | `README.md:14-24` |
-| TD-04 | No automated dependency vulnerability scanning — `pip-audit`, `govulncheck`, and `npm audit` are all absent from any pipeline | High | `ai-service/requirements.txt`, `platform/package.json`, `api/go.mod` |
-| TD-05 | No secrets manager — production secret hygiene relies entirely on developer discipline with `.env.example` pattern | Medium | `ai-service/.env.example`, `api/.env.example` |
-| TD-06 | Manual database schema deployment — no migration runner, no CI-driven schema apply | Medium | `README.md:35-37`, `supabase/migrations/` |
-| TD-07 | No infrastructure-as-code — no `Dockerfile`, `docker-compose.yml`, Terraform, or equivalent; infrastructure is not auditable or reproducible | Medium | Directory tree (no IaC files present at depth-2) |
-| TD-08 | AI service prompt injection defenses unverified — no evidence of rate limiting, request validation, or prompt injection mitigations in `ai-service/routers/` or `ai-service/core/` | Medium | `ai-service/routers/`, `ai-service/core/` |
-| TD-09 | Neon-Postgres skill registered (`skills-lock.json`, `.agents/skills/neon-postgres/SKILL.md`, `.claude/skills/neon-postgres/SKILL.md`) alongside Supabase as the declared persistence layer — potential dual-database drift or unresolved migration path | Low | `skills-lock.json`, `.agents/skills/neon-postgres/SKILL.md` |
-| TD-10 | `openspec/changes/` versioned diff tracking exists but no CI enforcement of contract conformance between platform and Go API | Low | `openspec/config.yaml`, `openspec/changes/` |
+| ID | Severity | Description | Location |
+|----|----------|-------------|----------|
+| TD-01 | Critical | Unresolved TODOs in Stripe webhook handler — Stripe signature verification status unknown; spoofed payment events are a live risk | `api/internal/handlers/webhooks.go:1` |
+| TD-02 | Critical | No CI pipeline — no automated test execution, secret scanning, dependency auditing, or static analysis on any PR across all three stacks | (no CI files found in repo) |
+| TD-03 | High | No `pip audit` for Python dependencies — supply-chain vulnerabilities in AI service go undetected | `ai-service/requirements.txt` |
+| TD-04 | High | No `govulncheck` for Go dependencies — despite `go.sum` hash pinning (`api/go.sum`), known CVEs in transitive deps are not surfaced | `api/go.mod`, `api/go.sum` |
+| TD-05 | High | No `npm audit` in CI for platform dependencies — lockfile present but vulnerabilities not scanned | `platform/package.json`, `platform/package-lock.json` |
+| TD-06 | High | Supabase RLS posture unverifiable — platform makes direct DB calls via client SDK; if RLS is misconfigured, cross-customer data reads are possible | `platform/lib/`, `supabase/migrations/` |
+| TD-07 | Medium | Inter-service communication is plain HTTP with no mTLS or service-mesh authentication — acceptable in local dev, must be hardened before production | `README.md:9-11` |
+| TD-08 | Medium | Secret scanning relies solely on agent hooks and `.gitignore` convention — no repository-enforced scanning on push or PR | `.claude/hooks/protect-env.sh`, `ai-service/.env.example`, `api/.env.example` |
+| TD-09 | Medium | Database schema applied manually via Supabase SQL editor — no automated migration runner or migration-state tracking in CI/CD | `supabase/migrations/`, `README.md:33-35` |
+| TD-10 | Low | Six templates (`event-app`, `personal-diary`, `portfolio-website`, `recipe-app`, `travel-planner`, `trip-game`) are standalone Next.js apps with no evidenced shared dependency management — version drift across templates is likely over time | `templates/` (directory tree) |
+| TD-11 | Low | OpenAPI spec changes tracked as discrete documents in `openspec/changes/` with no CI enforcement that implementation matches spec — contract drift between `api/` and `ai-service/` is undetected | `openspec/config.yaml`, `openspec/changes/` |
 
 ---
 
 # Recent incidents (last 90d)
 
-No incident records, post-mortems, or `INCIDENTS.md` files are present in the repository at commit `9ad5854`. The `docs/` directory contains `docs/ARCHITECTURE.md`, `docs/TRIAGE_FRAMEWORK.md`, and `docs/TRIAGE_REPORT.md` — the triage report may contain incident-adjacent information, but its contents are not available in the provided repo readings.
+No incident records, post-mortems, or `TRIAGE_REPORT.md` entries describing production incidents in the last 90 days are surfaced in the available repo readings. The triage framework document exists at `docs/TRIAGE_FRAMEWORK.md` and a triage report at `docs/TRIAGE_REPORT.md`, but their contents are not included in the provided readings and cannot be cited without fabrication.
 
-The high-churn file list for the last 90 days shows every touched file has exactly **1 touch** (`1 touches` across all entries), and the most recent commit is a merge of a wizard feature branch (`9ad5854 Merge pull request #10 from sagacioussid02/minions/eng/ship-verified-no-code-wizard-happy-path--529a71c5`). This commit history indicates the project is in early active development with no recorded production incidents — consistent with a pre-launch Phase 1/Phase 2 state (`README.md:28-33`).
+The only commit visible in the recent history is a documentation/dossier merge (`f5ab55c` — merge of PR #15, a dossier refresh). No rollback commits, hotfix branches, or incident-tagged commits appear in the commit log provided.
 
-**No incidents can be cited from the available repo readings.** If incidents have occurred outside the repository (e.g., in a ticketing system, Slack, or external runbook), they are not reflected here.
+**High-churn files in the 90-day window** are exclusively infrastructure and agent-configuration files (all with 1 touch each): `.claude/hooks/` scripts, `.claude/settings.json`, `.gitignore`, `CLAUDE.md`, `CONTRIBUTING.md`, and `.agents/skills/neon-postgres/SKILL.md`. This pattern is consistent with a project in initial setup/tooling phase rather than one recovering from production incidents.
+
+*If `docs/TRIAGE_REPORT.md` contains incident records, those should be reviewed directly and this section updated accordingly.*
 
 ---
 
 # Open questions for operator
 
-1. **Webhook handler completeness (blocking for payments):** The TODO at `api/internal/handlers/webhooks.go:1` is the only FIXME in the codebase and sits on the payment-critical path. Is Stripe webhook signature verification fully implemented and tested? Can the operator confirm whether live payment processing is currently enabled or gated?
+1. **Stripe webhook signature verification** — Has Stripe signature verification been implemented in `api/internal/handlers/webhooks.go`? The file carries the repo's highest TODO density (`api/internal/handlers/webhooks.go:1`). If not implemented, this is a P0 security gap that must be resolved before any live payment volume is accepted. Can the operator confirm current status and authorize prioritization as the next engineering task?
 
-2. **CI pipeline decision:** There are no CI configuration files in the repository. Is the absence of CI intentional for the current phase, or is a CI setup (GitHub Actions, CircleCI, etc.) planned imminently? Without CI, no automated security gates, test runs, or dependency audits exist for developer commits.
+2. **CI pipeline decision** — No CI configuration was found in the repository at this commit. Is the absence intentional (cost/time trade-off for MVP phase), or is CI setup blocked on a tooling decision (GitHub Actions vs. another provider)? Given that all three stacks have no automated security gates, the operator should authorize CI setup as a near-term priority and confirm the preferred CI provider.
 
-3. **Supabase vs. Neon-Postgres:** A Neon-Postgres skill is registered in `skills-lock.json` and present in both `.agents/skills/neon-postgres/SKILL.md` and `.claude/skills/neon-postgres/SKILL.md`, while the declared persistence layer is Supabase (`README.md:35-37`). Is there a planned or in-progress migration from Supabase to Neon? If so, what is the timeline and migration strategy for the existing schema in `supabase/migrations/`?
+3. **Supabase RLS configuration** — The platform front-end makes direct database calls via the Supabase client SDK (`platform/lib/`), making RLS the sole access-control layer for customer data. Has RLS been configured and reviewed in `supabase/migrations/`? If not, cross-customer data exposure is possible today. Operator sign-off on the RLS posture (or a remediation timeline) is needed before onboarding real customers.
 
-4. **Production deployment status:** The build roadmap describes Phase 1 as manual MVP and Phase 2 as automated Vercel deploy (`README.md:28-33`). Which phase is the project currently in? Is any service currently serving live production traffic, and if so, which environment variables and infrastructure are in use?
+4. **Current build phase and go-live timeline** — The README describes four build phases (`README.md:43-50`). Which phase is the project currently in, and what is the target date for Phase 2 automation (Go API + AI service + Vercel auto-deploy)? This determines urgency for resolving TD-01 through TD-08 above.
 
-5. **Row-level security on Supabase:** Multi-tenant data in Supabase requires RLS policies to prevent cross-customer data access. Can the operator confirm whether RLS policies are defined in `supabase/migrations/001_init.sql` or applied out-of-band? This is not verifiable from the directory tree alone.
+5. **Inter-service authentication in production** — All inter-service calls use plain HTTP with no mTLS or service-mesh authentication (`README.md:9-11`). Is there a private network boundary (e.g., Vercel private networking, VPC) planned for production that would contain the AI service (port 8000) and Go API (port 8080) from public reachability? If not, an authentication layer between services must be designed before production launch.
 
-6. **AI service exposure:** The AI service runs on port 8000. In the production topology, is this service publicly reachable or restricted to internal/VPC access from the Go API only? Publicly exposing the AI service would allow unauthenticated prompt injection and unbounded Anthropic API cost.
+6. **Template dependency governance** — Six standalone Next.js templates exist under `templates/` with no evidenced shared dependency management. Who owns version upgrades across templates, and is there a policy for keeping them in sync? As the template library grows, ungoverned version drift will become a maintenance burden.
 
-7. **Template XSS review:** AI-generated content is injected into six Next.js templates under `templates/`. Has a security review been conducted on how generated content is rendered (raw HTML vs. escaped)? This is a prerequisite before customer-facing deployments go live.
-
-8. **`docs/TRIAGE_REPORT.md` contents:** A triage report exists at `docs/TRIAGE_REPORT.md` but its contents were not available in the repo readings. Does this report document any known issues, incidents, or architectural decisions that should be reflected in this dossier?
+7. **OpenAPI contract enforcement** — The OpenAPI spec is tracked in `openspec/config.yaml` with changes in `openspec/changes/`, but there is no CI step to validate that the implementation matches the spec. Should contract testing (e.g., `oapi-codegen` for Go, `openapi-python-client` for the AI service) be added to the CI pipeline once CI is established? Operator direction on contract-enforcement strategy is needed.
