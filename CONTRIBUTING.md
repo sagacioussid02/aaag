@@ -40,12 +40,18 @@ When adding a new TODO or FIXME:
 2. Tag it with the appropriate severity (critical, high, medium, low).
 3. Indicate the path type (payment, auth, data, ui, infra, other).
 4. If it affects payment or auth paths, note that it is blocked from fixing until CI is green.
+5. Reference the tracked issue number (e.g., #AAAG-001) and assign an owner and deadline.
 
 Example:
 ```go
-// TODO(critical, auth): validate JWT expiry before processing requests
+// TODO(critical, payment): validate JWT expiry before processing requests
+// Issue: #AAAG-002
+// Owner: senior_engineer
+// Deadline: Sprint 8
 // Blocked until CI is green and auth path is fully tested.
 ```
+
+For the complete triage framework and categorization rules, see [docs/TRIAGE_FRAMEWORK.md](docs/TRIAGE_FRAMEWORK.md).
 
 ## Code Review Standards
 

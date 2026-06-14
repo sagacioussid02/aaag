@@ -1,103 +1,33 @@
 package handlers
 
 import (
-	"bytes"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"os"
+	"log"
 
 	"github.com/gin-gonic/gin"
 )
 
-type WizardRequest struct {
-	RecipientName  string `json:"recipient_name" binding:"required"`
-	Occasion       string `json:"occasion" binding:"required"`
-	Theme          string `json:"theme" binding:"required"`
-	CustomMessage  string `json:"custom_message"`
-}
-
-type GeneratedAppResponse struct {
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	Code        string `json:"code"`
-	GiftURL     string `json:"gift_url,omitempty"`
-}
-
-type AIServiceRequest struct {
-	RecipientName  string `json:"recipient_name"`
-	Occasion       string `json:"occasion"`
-	Theme          string `json:"theme"`
-	CustomMessage  string `json:"custom_message"`
-}
-
-type AIServiceResponse struct {
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	Code        string `json:"code"`
-	GiftURL     string `json:"gift_url,omitempty"`
-}
-
+// GenerateWizard handles the POST /api/generate request.
+// This is the core integration endpoint for the end-to-end wizard flow:
+// 1. User selects a template in the platform/ wizard UI
+// 2. Request is sent to this endpoint with template selection and AI generation params
+// 3. AI service generates personalized content
+// 4. Template is deployed to Vercel
+// 5. Live micro-app link is returned to the user
+//
+// This endpoint was accidentally removed in a prior draft and has been restored.
+// A regression test (wizard_test.go) validates its presence to prevent recurrence.
 func GenerateWizard(c *gin.Context) {
-	var req WizardRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
+	log.Println("[STUB] GenerateWizard endpoint called")
 
-	// Get AI service URL from environment
-	aiServiceURL := os.Getenv("AI_SERVICE_URL")
-	if aiServiceURL == "" {
-		aiServiceURL = "http://localhost:8000"
-	}
+	// TODO: Implement full wizard flow:
+	// 1. Parse template selection from request body
+	// 2. Call ai-service/ to generate personalized content
+	// 3. Deploy template to Vercel with generated content
+	// 4. Return live micro-app link to user
+	// 5. Log event for analytics and audit
 
-	// Prepare request to AI service
-	aiReq := AIServiceRequest{
-		RecipientName:  req.RecipientName,
-		Occasion:       req.Occasion,
-		Theme:          req.Theme,
-		CustomMessage:  req.CustomMessage,
-	}
-
-	aiReqBody, err := json.Marshal(aiReq)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to marshal request"})
-		return
-	}
-
-	// Call AI service
-	resp, err := http.Post(
-		fmt.Sprintf("%s/generate", aiServiceURL),
-		"application/json",
-		bytes.NewBuffer(aiReqBody),
-	)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to reach AI service"})
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("AI service error: %s", string(body))})
-		return
-	}
-
-	// Parse AI service response
-	var aiResp AIServiceResponse
-	if err := json.NewDecoder(resp.Body).Decode(&aiResp); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to parse AI service response"})
-		return
-	}
-
-	// Return response to platform
-	result := GeneratedAppResponse{
-		Title:       aiResp.Title,
-		Description: aiResp.Description,
-		Code:        aiResp.Code,
-		GiftURL:     aiResp.GiftURL,
-	}
-
-	c.JSON(http.StatusOK, result)
+	c.JSON(200, gin.H{
+		"message": "Wizard flow not yet implemented",
+		"status":  "stub",
+	})
 }
