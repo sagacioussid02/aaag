@@ -1,127 +1,119 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-import anthropic
-import os
-import logging
+"""AI Service for AaaG — Claude-powered content generation.
 
-app = FastAPI()
-logger = logging.getLogger(__name__)
+Provides endpoints for generating personalized app content using the Anthropic API.
+"""
+
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
+from anthropic import Anthropic, APIConnectionError, RateLimitError, AuthenticationError, APIStatusError
+import os
+
+app = FastAPI(title="AaaG AI Service", version="0.1.0")
 
 # Initialize Anthropic client
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+api_key = os.getenv("ANTHROPIC_API_KEY")
+if not api_key:
+    raise ValueError("ANTHROPIC_API_KEY environment variable is not set")
+
+client = Anthropic(api_key=api_key)
 
 
-class ContentGenerationRequest(BaseModel):
-    """Request schema for AI content generation."""
-    prompt: str
-    max_tokens: int = 1024
+class GenerateRequest(BaseModel):
+    """Request model for content generation."""
+    prompt: str = Field(..., min_length=1, max_length=2000, description="The prompt for content generation")
+    max_tokens: int = Field(default=1024, ge=1, le=4096, description="Maximum tokens in response")
 
 
-class ContentGenerationResponse(BaseModel):
-    """Response schema for AI content generation."""
+class GenerateResponse(BaseModel):
+    """Response model for content generation."""
     content: str
-    stop_reason: str
-    usage: dict
+    tokens_used: int
+    model: str
 
 
-class ErrorResponse(BaseModel):
-    """Error response schema."""
-    error: str
-    error_type: str
-    status_code: int
-
-
-@app.post("/generate", response_model=ContentGenerationResponse)
-async def generate_content(request: ContentGenerationRequest) -> ContentGenerationResponse:
-    """
-    Generate content using Claude AI.
-    
-    Validates the request against the Anthropic SDK contract and properly
-    handles both success and error responses.
+@app.post("/generate", response_model=GenerateResponse)
+async def generate_content(request: GenerateRequest) -> GenerateResponse:
+    """Generate personalized content using Claude.
     
     Args:
-        request: ContentGenerationRequest with prompt and optional max_tokens
+        request: GenerateRequest with prompt and optional max_tokens
         
     Returns:
-        ContentGenerationResponse with generated content and metadata
+        GenerateResponse with generated content and token usage
         
     Raises:
-        HTTPException: If the request is invalid or the API call fails
+        HTTPException: On API errors (connection, rate limit, auth, or server errors)
     """
-    # Validate request
-    if not request.prompt or len(request.prompt.strip()) == 0:
-        raise HTTPException(status_code=400, detail="Prompt cannot be empty")
+    # Validate input
+    if not request.prompt or not request.prompt.strip():
+        raise HTTPException(status_code=400, detail="Prompt cannot be empty or whitespace-only")
     
     if request.max_tokens < 1 or request.max_tokens > 4096:
         raise HTTPException(status_code=400, detail="max_tokens must be between 1 and 4096")
     
     try:
-        # Call Anthropic API with proper SDK contract
-        message = client.messages.create(
+        # Call Anthropic API
+        response = client.messages.create(
             model="claude-3-5-sonnet-20241022",
             max_tokens=request.max_tokens,
             messages=[
-                {"role": "user", "content": request.prompt}
+                {
+                    "role": "user",
+                    "content": request.prompt
+                }
             ]
         )
         
-        # Extract content from successful response
-        if not message.content or len(message.content) == 0:
-            logger.error("Empty content in API response")
+        # Extract content from response
+        if not response.content or len(response.content) == 0:
             raise HTTPException(status_code=500, detail="Empty response from API")
         
-        # Handle text content block
-        content_block = message.content[0]
-        if not hasattr(content_block, 'text'):
-            logger.error(f"Unexpected content block type: {type(content_block)}")
-            raise HTTPException(status_code=500, detail="Unexpected response format from API")
+        content = response.content[0].text
         
-        return ContentGenerationResponse(
-            content=content_block.text,
-            stop_reason=message.stop_reason,
-            usage={
-                "input_tokens": message.usage.input_tokens,
-                "output_tokens": message.usage.output_tokens
-            }
+        return GenerateResponse(
+            content=content,
+            tokens_used=response.usage.output_tokens,
+            model=response.model
         )
-    
-    except anthropic.APIConnectionError as e:
-        logger.error(f"API connection error: {str(e)}")
+        
+    except APIConnectionError as e:
+        # Connection error — service unavailable
         raise HTTPException(
             status_code=503,
-            detail=f"Failed to connect to API: {str(e)}"
+            detail=f"API connection error: {str(e)}"
         )
-    
-    except anthropic.RateLimitError as e:
-        logger.error(f"Rate limit exceeded: {str(e)}")
+    except RateLimitError as e:
+        # Rate limit exceeded
         raise HTTPException(
             status_code=429,
             detail=f"Rate limit exceeded: {str(e)}"
         )
-    
-    except anthropic.AuthenticationError as e:
-        logger.error(f"Authentication failed: {str(e)}")
+    except AuthenticationError as e:
+        # Authentication failed
         raise HTTPException(
             status_code=401,
-            detail="Authentication failed with Anthropic API"
+            detail=f"Authentication error: {str(e)}"
         )
-    
-    except anthropic.APIStatusError as e:
-        logger.error(f"API error (status {e.status_code}): {str(e)}")
-        raise HTTPException(
-            status_code=e.status_code or 500,
-            detail=f"API error: {str(e)}"
-        )
-    
-    except Exception as e:
-        logger.error(f"Unexpected error during content generation: {str(e)}")
+    except APIStatusError as e:
+        # Generic API error
         raise HTTPException(
             status_code=500,
-            detail=f"Internal server error: {str(e)}"
+            detail=f"API error: {str(e)}"
+        )
+    except Exception as e:
+        # Unexpected error
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error: {str(e)}"
         )
 
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint for CI integration."""
-    return {"status": "healthy"}
+    """Health check endpoint."""
+    return {"status": "ok", "service": "ai-service"}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
