@@ -1,36 +1,84 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Platform
 
-## Getting Started
+## Overview
 
-First, run the development server:
+The Platform is a Next.js 14 (TypeScript) application that provides the user-facing landing page, no-code wizard, and dashboard for the AaaG marketplace. Users create personalized micro-apps by filling out the wizard, which submits orders to the Go API.
+
+## Local Setup
+
+### Prerequisites
+
+- Node.js 18+
+- npm
+- The Go API running locally (see [api/README.md](../api/README.md))
+- The AI Service running locally (see [ai-service/README.md](../ai-service/README.md))
+
+### Installation
 
 ```bash
+cd platform
+
+# Install dependencies
+npm install
+
+# Run the development server
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+The platform will be available at `http://localhost:3000`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Environment Variables
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+**Optional:**
+- `NEXT_PUBLIC_API_URL` — URL of the Go API (default: `http://localhost:8080`)
+- `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` — Stripe publishable key for payment forms
 
-## Learn More
+## Wizard Flow
 
-To learn more about Next.js, take a look at the following resources:
+The no-code wizard is the primary user-facing feature. Users:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+1. Select a template (e.g., "Birthday Gift", "Thank You Card")
+2. Enter personalization input (e.g., "Make it funny and include emojis")
+3. Review the generated content
+4. Complete payment via Stripe
+5. Access their personalized app on the dashboard
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### Wizard Entry Point
 
-## Deploy on Vercel
+The wizard is located at `/wizard` and can be accessed from the landing page.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### Known Gaps
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+A comprehensive audit of the wizard flow is in progress. Current gaps and blockers are tracked in the following issues:
+
+- [Wizard Flow Audit Issues](https://github.com/minions/AaaG/issues?q=label%3Awizard-audit) — See GitHub issues labeled `wizard-audit` for detailed gap documentation and severity classification.
+
+All wizard flow gaps are documented with severity classification, and blocking gaps are filed as tracked issues. No new wizard surface ships without CI coverage.
+
+## Dashboard
+
+The dashboard displays all user-created apps and allows management of orders and settings.
+
+## Testing
+
+### Unit Tests
+
+```bash
+# Run unit tests
+npm run test
+```
+
+### E2E Tests
+
+```bash
+# Run end-to-end tests (requires all services running)
+npm run test:e2e
+```
+
+## Architecture
+
+See [ARCHITECTURE.md](../ARCHITECTURE.md) for the full service topology and data flow.
+
+## Contributing
+
+See [CONTRIBUTING.md](../CONTRIBUTING.md) for branch naming, PR process, and TODO/FIXME triage framework.
