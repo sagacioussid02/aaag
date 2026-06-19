@@ -1,67 +1,80 @@
 import os
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 import anthropic
+import re
 
 app = FastAPI()
 
 # Initialize Anthropic client at module level for efficiency
-api_key = os.getenv("ANTHROPIC_API_KEY")
-if not api_key:
-    raise ValueError("ANTHROPIC_API_KEY environment variable is required")
-client = anthropic.Anthropic(api_key=api_key)
+client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
 
-class GenerateRequest(BaseModel):
-    prompt: str = Field(min_length=1, max_length=2000)
-    max_tokens: int = Field(default=1024, ge=1, le=4096)
+class ContentRequest(BaseModel):
+    prompt: str
 
 
 class ContentResponse(BaseModel):
     content: str
-    tokens_used: int
 
 
-def sanitize_error_message(error_str: str) -> str:
+def sanitize_error_detail(error_message: str) -> str:
     """
-    Sanitize error messages to exclude sensitive context.
-    Removes API keys, internal paths, and other sensitive patterns.
+    Sanitize error messages to prevent leakage of sensitive context.
+    Removes API keys, stack traces, internal paths, and request metadata.
     """
-    sanitized = error_str
     # Remove common API key patterns
-    import re
-    sanitized = re.sub(r'sk-[a-zA-Z0-9]{20,}', '[REDACTED_API_KEY]', sanitized)
-    sanitized = re.sub(r'Bearer\s+[a-zA-Z0-9_-]+', '[REDACTED_TOKEN]', sanitized)
-    # Truncate to first 200 chars to avoid leaking stack traces
-    if len(sanitized) > 200:
-        sanitized = sanitized[:200] + "..."
+    sanitized = re.sub(r"sk-[A-Za-z0-9]{20,}", "[REDACTED_API_KEY]", error_message)
+    sanitized = re.sub(r"api[_-]?key[=:][^\s,}]+", "[REDACTED_API_KEY]", sanitized, flags=re.IGNORECASE)
+    
+    # Remove stack traces (lines starting with whitespace followed by 'at ' or 'File ')
+    sanitized = re.sub(r"\n\s+(at |File |Traceback)", "\n[STACK_TRACE_REDACTED]", sanitized)
+    
+    # Remove internal file paths
+    sanitized = re.sub(r"/[a-z0-9/_.-]+\.(py|go|js|ts)", "[INTERNAL_PATH_REDACTED]", sanitized, flags=re.IGNORECASE)
+    
+    # Remove request/response headers that might contain auth tokens
+    sanitized = re.sub(r"(authorization|x-api-key|cookie|set-cookie)[=:][^\n,}]+", "[REDACTED_HEADER]", sanitized, flags=re.IGNORECASE)
+    
     return sanitized
 
 
-@app.post("/generate")
-async def generate_content(request: GenerateRequest) -> ContentResponse:
+@app.post("/generate", response_model=ContentResponse)
+def generate_content(request: ContentRequest):
     """
-    Generate content using Anthropic API.
-    Propagates SDK errors with appropriate HTTP status codes.
+    Generate content using the Anthropic API.
+    
+    Handles all Anthropic SDK exceptions with proper HTTP status code mapping:
+    - APIStatusError (upstream API error with status code) → 502 Bad Gateway
+    - BadRequestError (malformed request) → 400 Bad Request
+    - AuthenticationError (upstream auth failure) → 401 Unauthorized
+    - RateLimitError (rate limited) → 429 Too Many Requests
+    - Generic APIError (other SDK errors) → 500 Internal Server Error
+    - Unexpected exceptions → 500 Internal Server Error
     """
-    # Validate prompt is not whitespace-only
-    if not request.prompt.strip():
-        raise HTTPException(status_code=400, detail="Prompt cannot be empty or whitespace-only")
+    # Validate and normalize prompt
+    if not request.prompt or not request.prompt.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Prompt cannot be empty"
+        )
+    
+    prompt = request.prompt.strip()
     
     try:
         message = client.messages.create(
             model="claude-3-5-sonnet-20241022",
-            max_tokens=request.max_tokens,
+            max_tokens=1024,
             messages=[
-                {"role": "user", "content": request.prompt}
+                {"role": "user", "content": prompt}
             ]
         )
         
-        # Handle edge case: empty content block
+        # Handle edge case: empty or malformed content blocks
         if not message.content or len(message.content) == 0:
             raise HTTPException(
                 status_code=500,
-                detail="Anthropic API returned empty content block"
+                detail="API returned empty content"
             )
         
         # Extract text from first content block
@@ -69,50 +82,58 @@ async def generate_content(request: GenerateRequest) -> ContentResponse:
         if not hasattr(first_block, 'text'):
             raise HTTPException(
                 status_code=500,
-                detail="Anthropic API returned non-text content block"
+                detail="API returned non-text content block"
             )
         
-        return ContentResponse(
-            content=first_block.text,
-            tokens_used=message.usage.output_tokens
-        )
+        return ContentResponse(content=first_block.text)
     
     except anthropic.APIStatusError as e:
-        # Upstream API error with status code → map to 502 Bad Gateway
-        error_detail = sanitize_error_message(str(e))
+        # Upstream API returned an error with a status code
+        # Map to 502 Bad Gateway to indicate upstream service failure
+        detail = sanitize_error_detail(str(e))
         raise HTTPException(
             status_code=502,
-            detail=f"Upstream API error: {error_detail}"
+            detail=detail
         )
     
     except anthropic.BadRequestError as e:
-        # Client error (invalid request) → 400
-        error_detail = sanitize_error_message(str(e))
+        # Malformed request to upstream API
+        detail = sanitize_error_detail(str(e))
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid request: {error_detail}"
+            detail=detail
         )
     
     except anthropic.AuthenticationError as e:
-        # Authentication failure → 401
-        error_detail = sanitize_error_message(str(e))
+        # Upstream authentication failed
+        # Explicitly state this is an upstream failure to avoid confusion
+        detail = sanitize_error_detail(str(e))
+        detail = f"Upstream authentication failed: {detail}"
         raise HTTPException(
             status_code=401,
-            detail=f"Authentication failed: {error_detail}"
+            detail=detail
         )
     
     except anthropic.RateLimitError as e:
-        # Rate limit exceeded → 429
-        error_detail = sanitize_error_message(str(e))
+        # Rate limited by upstream API
+        detail = sanitize_error_detail(str(e))
         raise HTTPException(
             status_code=429,
-            detail=f"Rate limit exceeded: {error_detail}"
+            detail=detail
         )
     
     except anthropic.APIError as e:
-        # Generic Anthropic SDK error → 500
-        error_detail = sanitize_error_message(str(e))
+        # Generic API error from SDK
+        detail = sanitize_error_detail(str(e))
         raise HTTPException(
             status_code=500,
-            detail=f"API error: {error_detail}"
+            detail=detail
+        )
+    
+    except Exception as e:
+        # Unexpected exception
+        detail = sanitize_error_detail(str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=detail
         )
