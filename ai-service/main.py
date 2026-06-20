@@ -1,198 +1,117 @@
-import json
-import logging
-import os
-from contextlib import asynccontextmanager
+"""AI Service for AaaG — Claude-powered content generation.
 
-from anthropic import Anthropic
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse
+Provides endpoints for generating personalized app content using the Anthropic API.
+"""
+
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
-from pythonjsonlogger import jsonlogger
-from slowapi import Limiter
-from slowapi.util import get_remote_address
-from tenacity import (
-    retry,
-    stop_after_attempt,
-    wait_exponential,
-    retry_if_exception_type,
-)
+from anthropic import Anthropic, APIConnectionError, RateLimitError, AuthenticationError, APIStatusError
+import os
 
-# Configure structured JSON logging
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-handler = logging.StreamHandler()
-formatter = jsonlogger.JsonFormatter()
-handler.setFormatter(formatter)
-logger.addHandler(handler)
-
-# Initialize rate limiter
-limiter = Limiter(key_func=get_remote_address)
+app = FastAPI(title="AaaG AI Service", version="0.1.0")
 
 # Initialize Anthropic client
-client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+api_key = os.getenv("ANTHROPIC_API_KEY")
+if not api_key:
+    raise ValueError("ANTHROPIC_API_KEY environment variable is not set")
+
+client = Anthropic(api_key=api_key)
 
 
 class GenerateRequest(BaseModel):
-    """Request body for content generation."""
-    prompt: str = Field(..., min_length=1, max_length=2000)
-    max_tokens: int = Field(default=1024, ge=1, le=4096)
+    """Request model for content generation."""
+    prompt: str = Field(..., min_length=1, max_length=2000, description="The prompt for content generation")
+    max_tokens: int = Field(default=1024, ge=1, le=4096, description="Maximum tokens in response")
 
 
 class GenerateResponse(BaseModel):
-    """Response body for content generation."""
+    """Response model for content generation."""
     content: str
     tokens_used: int
+    model: str
 
 
-@retry(
-    retry=retry_if_exception_type((Exception,)),
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=2, max=10),
-)
-async def call_anthropic_with_retry(prompt: str, max_tokens: int) -> dict:
-    """
-    Call Anthropic API with automatic retry logic.
+@app.post("/generate", response_model=GenerateResponse)
+async def generate_content(request: GenerateRequest) -> GenerateResponse:
+    """Generate personalized content using Claude.
     
-    Retries up to 3 times with exponential backoff (2s, 4s, 8s) on any exception.
+    Args:
+        request: GenerateRequest with prompt and optional max_tokens
+        
+    Returns:
+        GenerateResponse with generated content and token usage
+        
+    Raises:
+        HTTPException: On API errors (connection, rate limit, auth, or server errors)
     """
-    logger.info(
-        "calling_anthropic_api",
-        extra={
-            "prompt_length": len(prompt),
-            "max_tokens": max_tokens,
-        },
-    )
+    # Validate input
+    if not request.prompt or not request.prompt.strip():
+        raise HTTPException(status_code=400, detail="Prompt cannot be empty or whitespace-only")
+    
+    if request.max_tokens < 1 or request.max_tokens > 4096:
+        raise HTTPException(status_code=400, detail="max_tokens must be between 1 and 4096")
     
     try:
-        message = client.messages.create(
+        # Call Anthropic API
+        response = client.messages.create(
             model="claude-3-5-sonnet-20241022",
-            max_tokens=max_tokens,
+            max_tokens=request.max_tokens,
             messages=[
-                {"role": "user", "content": prompt}
-            ],
+                {
+                    "role": "user",
+                    "content": request.prompt
+                }
+            ]
         )
         
-        logger.info(
-            "anthropic_api_success",
-            extra={
-                "input_tokens": message.usage.input_tokens,
-                "output_tokens": message.usage.output_tokens,
-            },
+        # Extract content from response
+        if not response.content or len(response.content) == 0:
+            raise HTTPException(status_code=500, detail="Empty response from API")
+        
+        content = response.content[0].text
+        
+        return GenerateResponse(
+            content=content,
+            tokens_used=response.usage.output_tokens,
+            model=response.model
         )
         
-        return {
-            "content": message.content[0].text,
-            "tokens_used": message.usage.output_tokens,
-        }
+    except APIConnectionError as e:
+        # Connection error — service unavailable
+        raise HTTPException(
+            status_code=503,
+            detail=f"API connection error: {str(e)}"
+        )
+    except RateLimitError as e:
+        # Rate limit exceeded
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit exceeded: {str(e)}"
+        )
+    except AuthenticationError as e:
+        # Authentication failed
+        raise HTTPException(
+            status_code=401,
+            detail=f"Authentication error: {str(e)}"
+        )
+    except APIStatusError as e:
+        # Generic API error
+        raise HTTPException(
+            status_code=500,
+            detail=f"API error: {str(e)}"
+        )
     except Exception as e:
-        logger.error(
-            "anthropic_api_error",
-            extra={
-                "error_type": type(e).__name__,
-                "error_message": str(e),
-            },
+        # Unexpected error
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error: {str(e)}"
         )
-        raise
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Lifespan context manager for startup/shutdown."""
-    logger.info("ai_service_startup")
-    yield
-    logger.info("ai_service_shutdown")
-
-
-app = FastAPI(
-    title="AaaG AI Service",
-    description="Claude-powered content generation for personalized micro-apps",
-    version="0.1.0",
-    lifespan=lifespan,
-)
-
-# Attach rate limiter to app
-app.state.limiter = limiter
-
-
-@app.middleware("http")
-async def log_requests(request: Request, call_next):
-    """Middleware to log all HTTP requests and responses."""
-    logger.info(
-        "http_request",
-        extra={
-            "method": request.method,
-            "path": request.url.path,
-            "client": get_remote_address(request),
-        },
-    )
-    
-    response = await call_next(request)
-    
-    logger.info(
-        "http_response",
-        extra={
-            "method": request.method,
-            "path": request.url.path,
-            "status_code": response.status_code,
-        },
-    )
-    
-    return response
-
-
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    """Global exception handler with structured logging."""
-    logger.error(
-        "unhandled_exception",
-        extra={
-            "error_type": type(exc).__name__,
-            "error_message": str(exc),
-            "path": request.url.path,
-        },
-    )
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "Internal server error"},
-    )
 
 
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
-    return {"status": "ok"}
-
-
-@app.post("/generate", response_model=GenerateResponse)
-@limiter.limit("100/minute")
-async def generate(request: Request, body: GenerateRequest) -> GenerateResponse:
-    """
-    Generate content using Claude.
-    
-    Rate limited to 100 requests per minute.
-    Automatically retries on transient failures.
-    """
-    try:
-        result = await call_anthropic_with_retry(
-            prompt=body.prompt,
-            max_tokens=body.max_tokens,
-        )
-        return GenerateResponse(
-            content=result["content"],
-            tokens_used=result["tokens_used"],
-        )
-    except Exception as e:
-        logger.error(
-            "generate_endpoint_error",
-            extra={
-                "error_type": type(e).__name__,
-                "error_message": str(e),
-            },
-        )
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to generate content after retries",
-        )
+    return {"status": "ok", "service": "ai-service"}
 
 
 if __name__ == "__main__":

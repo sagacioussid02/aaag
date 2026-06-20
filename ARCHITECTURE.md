@@ -2,234 +2,167 @@
 
 ## Overview
 
-AaaG is a three-service marketplace platform for personalized micro-apps. The system consists of:
+AaaG (Apps As A Gift) is a three-service marketplace platform for personalized micro-apps. The architecture consists of:
 
-1. **Platform** (Next.js 14, TypeScript) — User-facing landing page, no-code wizard, and dashboard
-2. **API** (Go + Gin) — Orders, payments, and app lifecycle management
-3. **AI Service** (Python FastAPI) — Claude-powered content generation
-
-All services are backed by a PostgreSQL database (Supabase) and communicate via REST APIs.
+- **Platform** (Next.js 14, TypeScript) — User-facing landing page, no-code wizard, and dashboard
+- **API** (Go + Gin) — Backend service for orders, payments, and app lifecycle management
+- **AI Service** (Python FastAPI) — Claude-powered content generation via Anthropic SDK
+- **Database** (PostgreSQL via Supabase) — Persistent storage for users, orders, apps, and templates
 
 ## Service Topology
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    User Browser                              │
-└────────────────────┬────────────────────────────────────────┘
-                     │
-                     ▼
-        ┌────────────────────────┐
-        │  Platform (Next.js)    │
-        │  Port 3000             │
-        │  - Landing page        │
-        │  - Wizard UI           │
-        │  - Dashboard           │
-        └────────┬───────────────┘
-                 │
-        ┌────────┴──────────────────────────┐
-        │                                   │
-        ▼                                   ▼
-┌──────────────────┐            ┌──────────────────────┐
-│  Go API          │            │  AI Service          │
-│  Port 8080       │            │  Port 8000           │
-│  - Orders        │            │  - Content Gen       │
-│  - Payments      │            │  - Claude API calls  │
-│  - App Lifecycle │            │  - Error handling    │
-└────────┬─────────┘            └──────────┬───────────┘
-         │                                 │
-         └─────────────────┬───────────────┘
-                           │
-                           ▼
-                ┌──────────────────────┐
-                │  PostgreSQL (Supabase)│
-                │  - Orders            │
-                │  - Payments          │
-                │  - Users             │
-                │  - App configs       │
-                └──────────────────────┘
+│                    Platform (Next.js)                       │
+│              Landing page, wizard, dashboard                │
+│                      Port: 3000                             │
+└──────────────────────┬──────────────────────────────────────┘
+                       │
+                       │ HTTP/REST
+                       │
+┌──────────────────────▼──────────────────────────────────────┐
+│                   Go API (Gin)                              │
+│         Orders, payments, app lifecycle                     │
+│                      Port: 8080                             │
+└──────────────────────┬──────────────────────────────────────┘
+                       │
+                       │ HTTP/REST
+                       │
+┌──────────────────────▼──────────────────────────────────────┐
+│              AI Service (FastAPI)                           │
+│         Claude-powered content generation                   │
+│                      Port: 8000                             │
+└──────────────────────┬──────────────────────────────────────┘
+                       │
+                       │ SDK calls
+                       │
+┌──────────────────────▼──────────────────────────────────────┐
+│              Anthropic API (external)                       │
+│                  Claude models                              │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│              Supabase (PostgreSQL)                          │
+│         Shared database for all services                    │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ## Data Flow
 
-### User Creates a Micro-App (Wizard Flow)
+### User Creates a Personalized App (Happy Path)
 
-1. User fills out the no-code wizard in **Platform** (Next.js)
-2. Platform sends POST request to **Go API** (`/api/orders`) with app configuration
-3. Go API validates order, creates database record, and returns order ID
-4. Platform displays confirmation and redirects to dashboard
-5. Go API triggers **AI Service** (`/generate`) to create initial content
-6. AI Service calls Anthropic Claude API with user configuration
-7. AI Service returns generated content to Go API
-8. Go API stores content in PostgreSQL and updates order status
-9. Platform polls Go API for order status and displays deployed app link
+1. **Platform** → User fills out the no-code wizard and submits
+2. **Platform** → POST `/api/orders` to **Go API** with user input and template selection
+3. **Go API** → Validates order, creates order record in database, initiates payment flow
+4. **Go API** → POST `/generate` to **AI Service** with user input and template context
+5. **AI Service** → Calls Anthropic API to generate personalized content
+6. **AI Service** → Returns generated content to **Go API**
+7. **Go API** → Stores generated content in database, updates order status to `completed`
+8. **Go API** → Returns order confirmation to **Platform**
+9. **Platform** → Displays dashboard with the new app
 
-### Payment Processing
+### Error Handling
 
-1. User initiates payment in **Platform** dashboard
-2. Platform sends POST request to **Go API** (`/api/payments`) with payment details
-3. Go API processes payment (Stripe integration)
-4. Go API updates order payment status in PostgreSQL
-5. Go API returns payment confirmation to Platform
-6. Platform displays success/failure to user
+- **AI Service errors** (API connection, rate limit, auth, generic) are propagated to **Go API** with appropriate HTTP status codes (503, 429, 401, 500)
+- **Go API** returns error responses to **Platform** with error type and status code for debugging
+- **Platform** displays user-friendly error messages and retry prompts
 
 ## Inter-Service Request/Response Schema Baseline
 
-### Platform → Go API
+### Platform ↔ Go API
 
 #### POST /api/orders
+
 **Request:**
 ```json
 {
-  "user_id": "uuid",
-  "app_name": "string",
-  "app_description": "string",
-  "template_id": "string",
-  "customization": {
-    "color_scheme": "string",
-    "tone": "string"
-  }
+  "user_id": "string (UUID)",
+  "template_id": "string (UUID)",
+  "prompt": "string (user input for personalization)",
+  "max_tokens": "integer (optional, default 1024, range 1-5000)"
 }
 ```
 
-**Response (201):**
+**Response (Success, 200):**
 ```json
 {
-  "order_id": "uuid",
-  "status": "pending",
-  "created_at": "ISO8601",
-  "app_url": null
+  "order_id": "string (UUID)",
+  "status": "string (pending|processing|completed|failed)",
+  "created_at": "string (ISO 8601 timestamp)",
+  "app_url": "string (optional, populated when status=completed)"
 }
 ```
 
-**Response (400/500):**
+**Response (Error, 4xx/5xx):**
 ```json
 {
-  "error": "string",
-  "code": "string"
+  "error": "string (error type)",
+  "message": "string (human-readable message)",
+  "status_code": "integer"
 }
 ```
 
-#### POST /api/payments
-**Request:**
-```json
-{
-  "order_id": "uuid",
-  "amount": "number",
-  "currency": "string",
-  "payment_method": "string"
-}
-```
-
-**Response (200):**
-```json
-{
-  "payment_id": "uuid",
-  "order_id": "uuid",
-  "status": "completed",
-  "amount": "number"
-}
-```
-
-#### GET /api/orders/:order_id
-**Response (200):**
-```json
-{
-  "order_id": "uuid",
-  "status": "completed|pending|failed",
-  "app_url": "string or null",
-  "created_at": "ISO8601",
-  "updated_at": "ISO8601"
-}
-```
-
-### Go API → AI Service
+### Go API ↔ AI Service
 
 #### POST /generate
+
 **Request:**
 ```json
 {
-  "order_id": "uuid",
-  "app_name": "string",
-  "app_description": "string",
-  "template_id": "string",
-  "customization": {
-    "color_scheme": "string",
-    "tone": "string"
-  }
+  "prompt": "string (user input for content generation)",
+  "template_context": "string (template-specific context)",
+  "max_tokens": "integer (optional, default 1024, range 1-5000)"
 }
 ```
 
-**Response (200):**
+**Response (Success, 200):**
 ```json
 {
-  "order_id": "uuid",
-  "content": "string (HTML/JSX)",
-  "metadata": {
-    "tokens_used": "number",
-    "model": "string"
-  }
+  "generated_content": "string (Claude-generated content)",
+  "tokens_used": "integer (actual tokens consumed)",
+  "model": "string (Claude model used, e.g., 'claude-3-sonnet-20240229')"
 }
 ```
 
-**Response (400/500):**
+**Response (Error, 4xx/5xx):**
 ```json
 {
-  "error": "string",
-  "code": "string",
-  "details": "string (optional)"
+  "error": "string (error type: APIConnectionError|RateLimitError|AuthenticationError|APIStatusError)",
+  "message": "string (human-readable message)",
+  "status_code": "integer"
 }
 ```
 
-## Environment Variables
+## Local Development Setup
 
-### Platform (Next.js)
-- `NEXT_PUBLIC_API_URL` — Go API base URL (e.g., http://localhost:8080)
-- `NEXT_PUBLIC_AI_SERVICE_URL` — AI Service base URL (for direct calls, if any)
+For complete setup instructions, see the README in each service directory:
 
-### Go API
-- `DATABASE_URL` — PostgreSQL connection string (Supabase)
-- `STRIPE_API_KEY` — Stripe secret key for payment processing
-- `AI_SERVICE_URL` — AI Service base URL (e.g., http://localhost:8000)
-- `JWT_SECRET` — Secret for signing JWTs (if auth is implemented)
-- `PORT` — Server port (default: 8080)
+- [ai-service/README.md](ai-service/README.md) — AI Service setup
+- [api/README.md](api/README.md) — Go API setup
+- [platform/README.md](platform/README.md) — Platform setup
 
-### AI Service
-- `ANTHROPIC_API_KEY` — Anthropic API key for Claude access
-- `PORT` — Server port (default: 8000)
-- `LOG_LEVEL` — Logging level (default: INFO)
+All three services must be running for end-to-end testing. The platform wizard will fail if the Go API is unavailable, and the Go API will fail if the AI Service is unavailable.
 
-## Deployment Architecture
+## Build Order (MVP Phases)
 
-### Local Development
+- **Phase 0** — Landing page + waitlist (validate before building)
+- **Phase 1** — Manual MVP: Google Form → you deploy by hand → Stripe payment link
+- **Phase 2** — Automate: Go API + AI service + Vercel auto-deploy
+- **Phase 3** — Full platform: dashboard, 4 templates, ProductHunt launch
 
-Each service runs independently on its configured port:
-- Platform: http://localhost:3000
-- Go API: http://localhost:8080
-- AI Service: http://localhost:8000
-- Database: Supabase cloud (or local Postgres)
+Current sprint is focused on establishing CI infrastructure, auditing dependencies, and triaging technical debt to unblock Phase 2 and 3 work.
 
-### Production (Future)
+## Known Issues and Tracking
 
-- Platform: Vercel (Next.js)
-- Go API: Cloud Run or similar (containerized)
-- AI Service: Cloud Run or similar (containerized)
-- Database: Supabase managed PostgreSQL
+All TODO and FIXME annotations are tracked in the [triage framework](docs/TRIAGE_FRAMEWORK.md). The current triage report is available at [docs/TRIAGE_REPORT.md](docs/TRIAGE_REPORT.md).
 
-## Known Gaps and Tracked Issues
+Key items blocking Phase 2 completion:
 
-The following gaps are documented and tracked for future sprints:
+- **Wizard flow audit** — Document all gaps and file tracked issues (see [platform/README.md](platform/README.md) for entry point)
+- **Go API payment state machine** — Resolve incomplete transitions and add regression tests
+- **AI Service error propagation** — Ensure all Anthropic SDK errors are correctly returned to caller
+- **CI pipeline** — Stand up GitHub Actions for all three services
 
-- **Wizard Flow Audit** — Complete audit of all wizard surfaces and validation gaps (see wizard audit issues)
-- **OpenAPI Contract Spec** — Full contract specification for inter-service APIs (deferred to Sprint N+1)
-- **Secret Management ADR** — Formal decision record for secret management architecture (requires operator approval)
-- **Payment State Machine** — Incomplete transitions in order/payment lifecycle (tracked as P0 bug)
-- **AI Service Error Propagation** — Unhandled Anthropic SDK error paths (tracked as P0 bug)
-- **CI Pipeline** — GitHub Actions matrix for all three services (in progress)
+## Contributing
 
-For the complete triage of all TODO/FIXME items, see [docs/TRIAGE_REPORT.md](docs/TRIAGE_REPORT.md).
-
-## Next Steps
-
-1. **Sprint 7** — Complete wizard flow audit, stabilize payment state machine, validate AI SDK contract, establish CI pipeline
-2. **Sprint N+1** — Full OpenAPI contract spec, complete wizard flow implementation, secret management implementation
-3. **Sprint N+2** — Dashboard features, template expansion, ProductHunt launch preparation
+See [CONTRIBUTING.md](CONTRIBUTING.md) for branch naming, PR process, and TODO/FIXME triage framework.

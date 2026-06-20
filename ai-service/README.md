@@ -1,6 +1,8 @@
-# AaaG AI Service
+# AI Service
 
-Python FastAPI service for Claude-powered content generation.
+## Overview
+
+The AI Service is a Python FastAPI application that provides Claude-powered content generation for personalized micro-apps. It wraps the Anthropic SDK and exposes a single `/generate` endpoint for the Go API to call.
 
 ## Local Setup
 
@@ -14,6 +16,34 @@ Python FastAPI service for Claude-powered content generation.
 
 ```bash
 cd ai-service
+
+# Create a .env file with your Anthropic API key
+cp .env.example .env
+# Edit .env and add your ANTHROPIC_API_KEY value
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run the service
+uvicorn main:app --reload --port 8000
+```
+
+The service will be available at `http://localhost:8000`.
+
+### Environment Variables
+
+**Required:**
+- `ANTHROPIC_API_KEY` — Your Anthropic API key (get from https://console.anthropic.com)
+
+**Optional:**
+- `UVICORN_HOST` — Host to bind to (default: `127.0.0.1`)
+- `UVICORN_PORT` — Port to bind to (default: `8000`)
+
+## API Contract
+
+### POST /generate
+
+Generate personalized content using Claude.
 pip install -r requirements.txt
 ```
 
