@@ -8,9 +8,9 @@ The AI Service is a Python FastAPI application that provides Claude-powered cont
 
 ### Prerequisites
 
-- Python 3.9+
-- pip
-- An Anthropic API key (get one at https://console.anthropic.com)
+- Python 3.10+
+- pip or poetry
+- Anthropic API key
 
 ### Installation
 
@@ -44,71 +44,178 @@ The service will be available at `http://localhost:8000`.
 ### POST /generate
 
 Generate personalized content using Claude.
+pip install -r requirements.txt
+```
+
+### Environment Variables
+
+Create a `.env` file in the `ai-service/` directory:
+
+```bash
+cp .env.example .env
+```
+
+Then update with your values:
+
+```
+# Anthropic API key (required)
+ANTHROPIC_API_KEY=sk-ant-...
+
+# Server port
+PORT=8000
+
+# Logging level
+LOG_LEVEL=INFO
+
+# Environment
+ENVIRONMENT=development
+```
+
+**Important:** Do not commit `.env` to version control. Use `.env.example` to document required variables.
+
+### Running Locally
+
+```bash
+uvicorn main:app --reload --port 8000
+```
+
+The API will start on http://localhost:8000.
+
+API documentation is available at http://localhost:8000/docs (Swagger UI).
+
+## API Endpoints
+
+### Content Generation
+
+#### POST /generate
+Generate content using Claude based on app configuration.
 
 **Request:**
 ```json
 {
-  "prompt": "string (required, user input for content generation)",
-  "template_context": "string (optional, template-specific context)",
-  "max_tokens": "integer (optional, default 1024, range 1-5000)"
+  "order_id": "uuid",
+  "app_name": "string",
+  "app_description": "string",
+  "template_id": "string",
+  "customization": {
+    "color_scheme": "string",
+    "tone": "string"
+  }
 }
 ```
 
-**Response (Success, 200):**
+**Response (200):**
 ```json
 {
-  "generated_content": "string (Claude-generated content)",
-  "tokens_used": "integer (actual tokens consumed)",
-  "model": "string (Claude model used, e.g., 'claude-3-sonnet-20240229')"
+  "order_id": "uuid",
+  "content": "string (HTML/JSX)",
+  "metadata": {
+    "tokens_used": "number",
+    "model": "string"
+  }
 }
 ```
 
-**Response (Error, 4xx/5xx):**
+**Response (400/500):**
 ```json
 {
-  "error": "string (error type: APIConnectionError|RateLimitError|AuthenticationError|APIStatusError)",
-  "message": "string (human-readable message)",
-  "status_code": "integer"
+  "error": "string",
+  "code": "string",
+  "details": "string (optional)"
 }
 ```
+
+For complete request/response schemas, see [ARCHITECTURE.md](../ARCHITECTURE.md#inter-service-request-response-schema-baseline).
+
+## Project Structure
+
+```
+ai-service/
+├── main.py                # FastAPI app entry point
+├── models.py              # Pydantic models for request/response
+├── services/
+│   └── claude.py          # Claude API integration
+├── handlers/              # Request handlers
+├── middleware/            # HTTP middleware
+├── requirements.txt       # Python dependencies
+├── .env.example           # Environment variable template
+└── README.md
+```
+
+## Claude Integration
+
+The service uses the Anthropic Python SDK to call Claude:
+
+1. Receives content generation request from Go API
+2. Constructs prompt based on app configuration and customization
+3. Calls Claude API with prompt
+4. Parses Claude response and formats as HTML/JSX
+5. Returns generated content to Go API
 
 ### Error Handling
 
-The service catches all Anthropic SDK exceptions and returns appropriate HTTP status codes:
+The service properly handles and propagates Anthropic SDK errors:
 
-- `503 Service Unavailable` — API connection error
-- `429 Too Many Requests` — Rate limit exceeded
-- `401 Unauthorized` — Authentication error (invalid API key)
-- `500 Internal Server Error` — Generic API error
+- API key validation errors
+- Rate limiting errors
+- Network errors
+- Invalid request errors
+
+**Note:** Error propagation has known gaps (tracked as P0 bug). See [ARCHITECTURE.md](../ARCHITECTURE.md#known-gaps-and-tracked-issues).
 
 ## Testing
 
-### Unit Tests
-
 ```bash
-# Run unit tests (no live API calls)
-pytest test_main.py -v
+# Run tests
+pytest
+
+# Run tests with coverage
+pytest --cov=.
+
+# Run linting
+flake8 .
+pylint *.py
 ```
 
-Unit tests validate:
-- Success path with proper SDK contract
-- Input validation (empty prompts, whitespace, max_tokens bounds)
-- Error propagation for all SDK exception types
-- Mock-based isolation (no live API calls)
-
-### Smoke Tests
+## Building
 
 ```bash
-# Run smoke tests (requires ANTHROPIC_API_KEY in environment)
-pytest test_smoke.py -v -m smoke
+# Build Docker image
+docker build -t aaag-ai-service .
 ```
 
-Smoke tests validate the real SDK contract against the live Anthropic API. These tests are skipped if `ANTHROPIC_API_KEY` is not set.
+## Deployment
 
-## Architecture
+The service is designed to deploy to Cloud Run or similar containerized environment:
 
-See [ARCHITECTURE.md](../ARCHITECTURE.md) for the full service topology and data flow.
+```bash
+# Build and push Docker image
+docker build -t gcr.io/PROJECT_ID/aaag-ai-service .
+docker push gcr.io/PROJECT_ID/aaag-ai-service
+
+# Deploy to Cloud Run
+gcloud run deploy aaag-ai-service --image gcr.io/PROJECT_ID/aaag-ai-service
+```
+
+Set environment variables in deployment:
+- `ANTHROPIC_API_KEY` — Production Anthropic API key
+- `PORT` — Server port (default: 8000)
+- `LOG_LEVEL` — Logging level (default: INFO)
+
+## Troubleshooting
+
+### "Invalid API key"
+
+Ensure `ANTHROPIC_API_KEY` is set correctly in `.env` and is a valid Anthropic API key.
+
+### "Rate limit exceeded"
+
+The service is hitting Anthropic API rate limits. Wait before retrying or upgrade your Anthropic plan.
+
+### "Service not responding"
+
+Ensure the service is running and accessible on the configured port.
 
 ## Contributing
 
-See [CONTRIBUTING.md](../CONTRIBUTING.md) for branch naming, PR process, and TODO/FIXME triage framework.
+See [CONTRIBUTING.md](../CONTRIBUTING.md) for branch naming, PR process, and code standards.
