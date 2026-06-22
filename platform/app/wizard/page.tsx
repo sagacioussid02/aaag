@@ -1,165 +1,185 @@
 'use client';
 
-import { useState } from 'react';
-import { generateMicroApp } from '@/lib/api-client';
+import { useState, useCallback } from 'react';
+import StepOne from './steps/StepOne';
+import StepTwo from './steps/StepTwo';
+import StepThree from './steps/StepThree';
+import { useWizardState } from './hooks/useWizardState';
 
-interface GeneratedApp {
-  title: string;
-  description: string;
-  code: string;
-  gift_url?: string;
+type WizardStep = 1 | 2 | 3;
+
+interface WizardState {
+  currentStep: WizardStep;
+  templateId: string | null;
+  userInput: Record<string, string>;
+  validationError: string | null;
+  isSubmitting: boolean;
 }
 
 export default function WizardPage() {
-  const [formData, setFormData] = useState({
-    recipient_name: '',
-    occasion: '',
-    theme: '',
-    custom_message: '',
+  const [wizardState, setWizardState] = useState<WizardState>({
+    currentStep: 1,
+    templateId: null,
+    userInput: {},
+    validationError: null,
+    isSubmitting: false,
   });
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<GeneratedApp | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
-    const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
-  };
+  const { validateStep, transitionToStep } = useWizardState();
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-    setResult(null);
+  const handleStepOneComplete = useCallback(
+    (templateId: string) => {
+      const isValid = validateStep(1, { templateId });
+      if (isValid) {
+        setWizardState((prev) => ({
+          ...prev,
+          templateId,
+          currentStep: 2,
+          validationError: null,
+        }));
+      } else {
+        setWizardState((prev) => ({
+          ...prev,
+          validationError: 'Please select a template to continue.',
+        }));
+      }
+    },
+    [validateStep]
+  );
 
-    try {
-      const response = await generateMicroApp(formData);
-      setResult(response);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to generate micro-app');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const handleStepTwoComplete = useCallback(
+    (input: Record<string, string>) => {
+      const isValid = validateStep(2, input);
+      if (isValid) {
+        setWizardState((prev) => ({
+          ...prev,
+          userInput: input,
+          currentStep: 3,
+          validationError: null,
+        }));
+      } else {
+        setWizardState((prev) => ({
+          ...prev,
+          validationError: 'Please fill in all required fields.',
+        }));
+      }
+    },
+    [validateStep]
+  );
+
+  const handleStepThreeSubmit = useCallback(
+    async (input: Record<string, string>) => {
+      setWizardState((prev) => ({
+        ...prev,
+        isSubmitting: true,
+        validationError: null,
+      }));
+
+      try {
+        const response = await fetch('/api/orders', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            templateId: wizardState.templateId,
+            userInput: { ...wizardState.userInput, ...input },
+          }),
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          setWizardState((prev) => ({
+            ...prev,
+            validationError: error.message || 'Failed to submit order. Please try again.',
+            isSubmitting: false,
+          }));
+          return;
+        }
+
+        // Order submitted successfully
+        const order = await response.json();
+        // Redirect to order confirmation or dashboard
+        window.location.href = `/dashboard/orders/${order.id}`;
+      } catch (err) {
+        setWizardState((prev) => ({
+          ...prev,
+          validationError: 'An unexpected error occurred. Please try again.',
+          isSubmitting: false,
+        }));
+      }
+    },
+    [wizardState.templateId, wizardState.userInput]
+  );
+
+  const handleBack = useCallback(() => {
+    setWizardState((prev) => {
+      const prevStep = Math.max(1, prev.currentStep - 1) as WizardStep;
+      return {
+        ...prev,
+        currentStep: prevStep,
+        validationError: null,
+      };
+    });
+  }, []);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-50 to-blue-50 p-8">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 py-12 px-4">
       <div className="max-w-2xl mx-auto">
-        <h1 className="text-4xl font-bold text-gray-900 mb-2">Create a Gift Micro-App</h1>
-        <p className="text-gray-600 mb-8">Personalize a micro-app for someone special in minutes.</p>
+        {/* Progress indicator */}
+        <div className="mb-8">
+          <div className="flex justify-between items-center">
+            {[1, 2, 3].map((step) => (
+              <div key={step} className="flex items-center">
+                <div
+                  className={`w-10 h-10 rounded-full flex items-center justify-center font-bold ${
+                    step <= wizardState.currentStep
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-gray-300 text-gray-600'
+                  }`}
+                >
+                  {step}
+                </div>
+                {step < 3 && (
+                  <div
+                    className={`flex-1 h-1 mx-2 ${
+                      step < wizardState.currentStep ? 'bg-indigo-600' : 'bg-gray-300'
+                    }`}
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
 
-        {!result ? (
-          <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow-lg p-8 space-y-6">
-            <div>
-              <label htmlFor="recipient_name" className="block text-sm font-medium text-gray-700 mb-2">
-                Recipient Name
-              </label>
-              <input
-                type="text"
-                id="recipient_name"
-                name="recipient_name"
-                value={formData.recipient_name}
-                onChange={handleChange}
-                required
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                placeholder="e.g., Sarah"
-              />
-            </div>
-
-            <div>
-              <label htmlFor="occasion" className="block text-sm font-medium text-gray-700 mb-2">
-                Occasion
-              </label>
-              <select
-                id="occasion"
-                name="occasion"
-                value={formData.occasion}
-                onChange={handleChange}
-                required
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-              >
-                <option value="">Select an occasion</option>
-                <option value="birthday">Birthday</option>
-                <option value="anniversary">Anniversary</option>
-                <option value="graduation">Graduation</option>
-                <option value="promotion">Promotion</option>
-                <option value="thank_you">Thank You</option>
-              </select>
-            </div>
-
-            <div>
-              <label htmlFor="theme" className="block text-sm font-medium text-gray-700 mb-2">
-                Theme
-              </label>
-              <select
-                id="theme"
-                name="theme"
-                value={formData.theme}
-                onChange={handleChange}
-                required
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-              >
-                <option value="">Select a theme</option>
-                <option value="adventure">Adventure</option>
-                <option value="wellness">Wellness</option>
-                <option value="creativity">Creativity</option>
-                <option value="learning">Learning</option>
-              </select>
-            </div>
-
-            <div>
-              <label htmlFor="custom_message" className="block text-sm font-medium text-gray-700 mb-2">
-                Custom Message (Optional)
-              </label>
-              <textarea
-                id="custom_message"
-                name="custom_message"
-                value={formData.custom_message}
-                onChange={handleChange}
-                rows={4}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                placeholder="Add a personal message..."
-              />
-            </div>
-
-            {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">{error}</div>}
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-purple-600 hover:bg-purple-700 disabled:bg-gray-400 text-white font-semibold py-3 rounded-lg transition"
-            >
-              {loading ? 'Generating...' : 'Generate Micro-App'}
-            </button>
-          </form>
-        ) : (
-          <div className="bg-white rounded-lg shadow-lg p-8">
-            <h2 className="text-2xl font-bold text-gray-900 mb-4">{result.title}</h2>
-            <p className="text-gray-600 mb-6">{result.description}</p>
-            <div className="bg-gray-50 rounded-lg p-4 mb-6 font-mono text-sm overflow-auto max-h-64">
-              <pre>{result.code}</pre>
-            </div>
-            {result.gift_url && (
-              <a
-                href={result.gift_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-block bg-purple-600 hover:bg-purple-700 text-white font-semibold py-2 px-6 rounded-lg transition"
-              >
-                View Micro-App
-              </a>
-            )}
-            <button
-              onClick={() => {
-                setResult(null);
-                setFormData({ recipient_name: '', occasion: '', theme: '', custom_message: '' });
-              }}
-              className="ml-4 bg-gray-300 hover:bg-gray-400 text-gray-900 font-semibold py-2 px-6 rounded-lg transition"
-            >
-              Create Another
-            </button>
+        {/* Error message display */}
+        {wizardState.validationError && (
+          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+            <p className="text-red-700 font-medium">{wizardState.validationError}</p>
           </div>
         )}
+
+        {/* Step content */}
+        <div className="bg-white rounded-lg shadow-lg p-8">
+          {wizardState.currentStep === 1 && (
+            <StepOne onComplete={handleStepOneComplete} selectedTemplate={wizardState.templateId} />
+          )}
+          {wizardState.currentStep === 2 && (
+            <StepTwo
+              onComplete={handleStepTwoComplete}
+              onBack={handleBack}
+              templateId={wizardState.templateId || ''}
+              initialInput={wizardState.userInput}
+            />
+          )}
+          {wizardState.currentStep === 3 && (
+            <StepThree
+              onSubmit={handleStepThreeSubmit}
+              onBack={handleBack}
+              templateId={wizardState.templateId || ''}
+              userInput={wizardState.userInput}
+              isSubmitting={wizardState.isSubmitting}
+            />
+          )}
+        </div>
       </div>
     </div>
   );
