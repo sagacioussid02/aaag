@@ -1,28 +1,24 @@
-/**
- * TypeScript types for order-related data structures.
- */
-
 export interface WizardFormData {
+  template_id: string;
+  recipient_name: string;
   email: string;
-  template_id: string;
-  recipient_name?: string;
-  gift_message?: string;
-  [key: string]: unknown; // Allow additional wizard step inputs
+  gift_message: string;
+  additionalData?: Record<string, unknown>;
 }
 
-export interface Order {
+export interface CreateOrderRequest {
+  template_id: string;
+  recipient_name: string;
+  email: string;
+  gift_message: string;
+  wizard_data: Record<string, unknown>;
+}
+
+export interface CreateOrderResponse {
   id: string;
-  user_email: string;
-  template_id: string;
-  status: 'pending' | 'payment_pending' | 'processing' | 'completed' | 'failed';
+  status: string;
   created_at: string;
-  updated_at: string;
-  payment_url?: string;
-  app_url?: string;
-}
-
-export interface OrderError {
-  message: string;
-  field?: string; // Field name if validation error
-  status: number;
+  template_id: string;
+  recipient_name: string;
+  email: string;
 }
