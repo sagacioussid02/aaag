@@ -1,185 +1,164 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
+import { useWizardState } from './hooks/useWizardState';
 import StepOne from './steps/StepOne';
 import StepTwo from './steps/StepTwo';
 import StepThree from './steps/StepThree';
-import { useWizardState } from './hooks/useWizardState';
 
-type WizardStep = 1 | 2 | 3;
-
-interface WizardState {
-  currentStep: WizardStep;
-  templateId: string | null;
-  userInput: Record<string, string>;
-  validationError: string | null;
-  isSubmitting: boolean;
-}
+const TEMPLATES = [
+  { id: 'template-1', name: 'Portfolio' },
+  { id: 'template-2', name: 'Blog' },
+  { id: 'template-3', name: 'E-commerce' },
+];
 
 export default function WizardPage() {
-  const [wizardState, setWizardState] = useState<WizardState>({
-    currentStep: 1,
-    templateId: null,
-    userInput: {},
-    validationError: null,
-    isSubmitting: false,
-  });
+  const {
+    currentStep,
+    data,
+    error,
+    validateStep,
+    transitionToStep,
+    updateStepData,
+    setError,
+    clearError,
+  } = useWizardState();
 
-  const { validateStep, transitionToStep } = useWizardState();
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleStepOneComplete = useCallback(
-    (templateId: string) => {
-      const isValid = validateStep(1, { templateId });
-      if (isValid) {
-        setWizardState((prev) => ({
-          ...prev,
-          templateId,
-          currentStep: 2,
-          validationError: null,
-        }));
-      } else {
-        setWizardState((prev) => ({
-          ...prev,
-          validationError: 'Please select a template to continue.',
-        }));
+    (stepData: Record<string, any>) => {
+      updateStepData(1, stepData);
+      if (validateStep(1, stepData)) {
+        clearError();
+        transitionToStep(2);
       }
     },
-    [validateStep]
+    [validateStep, transitionToStep, updateStepData, clearError]
   );
 
   const handleStepTwoComplete = useCallback(
-    (input: Record<string, string>) => {
-      const isValid = validateStep(2, input);
-      if (isValid) {
-        setWizardState((prev) => ({
-          ...prev,
-          userInput: input,
-          currentStep: 3,
-          validationError: null,
-        }));
+    (stepData: Record<string, any>) => {
+      updateStepData(2, stepData);
+      if (validateStep(2, stepData)) {
+        clearError();
+        transitionToStep(3);
       } else {
-        setWizardState((prev) => ({
-          ...prev,
-          validationError: 'Please fill in all required fields.',
-        }));
+        setError('Please fill in all required fields');
       }
     },
-    [validateStep]
+    [validateStep, transitionToStep, updateStepData, setError, clearError]
+  );
+
+  const handleStepTwoError = useCallback(
+    (errorMessage: string) => {
+      setError(errorMessage);
+    },
+    [setError]
   );
 
   const handleStepThreeSubmit = useCallback(
-    async (input: Record<string, string>) => {
-      setWizardState((prev) => ({
-        ...prev,
-        isSubmitting: true,
-        validationError: null,
-      }));
-
+    async (stepData: Record<string, any>) => {
+      setIsSubmitting(true);
       try {
         const response = await fetch('/api/orders', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            templateId: wizardState.templateId,
-            userInput: { ...wizardState.userInput, ...input },
-          }),
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(stepData),
         });
 
         if (!response.ok) {
-          const error = await response.json();
-          setWizardState((prev) => ({
-            ...prev,
-            validationError: error.message || 'Failed to submit order. Please try again.',
-            isSubmitting: false,
-          }));
+          const errorData = await response.json();
+          if (response.status >= 400 && response.status < 500) {
+            // Validation error
+            setError(errorData.error || 'Validation failed');
+          } else {
+            // Server error
+            setError('Server error: ' + (errorData.error || 'Please try again'));
+          }
           return;
         }
 
-        // Order submitted successfully
-        const order = await response.json();
-        // Redirect to order confirmation or dashboard
-        window.location.href = `/dashboard/orders/${order.id}`;
+        const result = await response.json();
+        clearError();
+        // Handle successful submission
+        console.log('Order submitted:', result);
       } catch (err) {
-        setWizardState((prev) => ({
-          ...prev,
-          validationError: 'An unexpected error occurred. Please try again.',
-          isSubmitting: false,
-        }));
+        setError('Failed to submit order: ' + (err instanceof Error ? err.message : 'Unknown error'));
+      } finally {
+        setIsSubmitting(false);
       }
     },
-    [wizardState.templateId, wizardState.userInput]
+    [setError, clearError]
+  );
+
+  const handleStepThreeError = useCallback(
+    (errorMessage: string) => {
+      setError(errorMessage);
+    },
+    [setError]
   );
 
   const handleBack = useCallback(() => {
-    setWizardState((prev) => {
-      const prevStep = Math.max(1, prev.currentStep - 1) as WizardStep;
-      return {
-        ...prev,
-        currentStep: prevStep,
-        validationError: null,
-      };
-    });
-  }, []);
+    if (currentStep > 1) {
+      clearError();
+      transitionToStep(currentStep - 1);
+    }
+  }, [currentStep, transitionToStep, clearError]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 py-12 px-4">
-      <div className="max-w-2xl mx-auto">
-        {/* Progress indicator */}
-        <div className="mb-8">
-          <div className="flex justify-between items-center">
-            {[1, 2, 3].map((step) => (
-              <div key={step} className="flex items-center">
-                <div
-                  className={`w-10 h-10 rounded-full flex items-center justify-center font-bold ${
-                    step <= wizardState.currentStep
-                      ? 'bg-indigo-600 text-white'
-                      : 'bg-gray-300 text-gray-600'
-                  }`}
-                >
-                  {step}
-                </div>
-                {step < 3 && (
-                  <div
-                    className={`flex-1 h-1 mx-2 ${
-                      step < wizardState.currentStep ? 'bg-indigo-600' : 'bg-gray-300'
-                    }`}
-                  />
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
+    <div className="wizard-container">
+      <div className="wizard-header">
+        <h1>Create Your Personalized App</h1>
+        <p>Step {currentStep} of 3</p>
+      </div>
 
-        {/* Error message display */}
-        {wizardState.validationError && (
-          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
-            <p className="text-red-700 font-medium">{wizardState.validationError}</p>
-          </div>
+      {error && (
+        <div className="error-banner" role="alert">
+          {error}
+        </div>
+      )}
+
+      <div className="wizard-content">
+        {currentStep === 1 && (
+          <StepOne
+            templates={TEMPLATES}
+            selectedTemplate={data[1]?.templateId || null}
+            onComplete={handleStepOneComplete}
+          />
         )}
 
-        {/* Step content */}
-        <div className="bg-white rounded-lg shadow-lg p-8">
-          {wizardState.currentStep === 1 && (
-            <StepOne onComplete={handleStepOneComplete} selectedTemplate={wizardState.templateId} />
-          )}
-          {wizardState.currentStep === 2 && (
-            <StepTwo
-              onComplete={handleStepTwoComplete}
-              onBack={handleBack}
-              templateId={wizardState.templateId || ''}
-              initialInput={wizardState.userInput}
-            />
-          )}
-          {wizardState.currentStep === 3 && (
-            <StepThree
-              onSubmit={handleStepThreeSubmit}
-              onBack={handleBack}
-              templateId={wizardState.templateId || ''}
-              userInput={wizardState.userInput}
-              isSubmitting={wizardState.isSubmitting}
-            />
-          )}
-        </div>
+        {currentStep === 2 && (
+          <StepTwo
+            data={data[2] || {}}
+            onComplete={handleStepTwoComplete}
+            onError={handleStepTwoError}
+          />
+        )}
+
+        {currentStep === 3 && (
+          <StepThree
+            data={{
+              ...data[1],
+              ...data[2],
+              ...data[3],
+            }}
+            templates={TEMPLATES}
+            onComplete={handleStepThreeSubmit}
+            onError={handleStepThreeError}
+            isSubmitting={isSubmitting}
+          />
+        )}
+      </div>
+
+      <div className="wizard-footer">
+        {currentStep > 1 && (
+          <button onClick={handleBack} disabled={isSubmitting}>
+            Back
+          </button>
+        )}
       </div>
     </div>
   );
