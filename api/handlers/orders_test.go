@@ -8,111 +8,112 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 )
 
-func TestCreateOrder_ValidationError(t *testing.T) {
-	// Setup Gin router
-	router := gin.Default()
-	router.POST("/api/orders", CreateOrder)
-
+func TestSubmitOrder(t *testing.T) {
 	tests := []struct {
 		name           string
 		request        OrderRequest
 		expectedStatus int
+		expectedError  string
 		expectedFields []string
 	}{
 		{
-			name: "missing template_id",
+			name: "valid order",
 			request: OrderRequest{
-				TemplateID: "",
-				UserName:   "John Doe",
-				UserEmail:  "john@example.com",
+				TemplateID:     "template-123",
+				UserName:       "John Doe",
+				UserEmail:      "john@example.com",
+				RecipientName:  "Jane Doe",
+				RecipientEmail: "jane@example.com",
 			},
-			expectedStatus: http.StatusBadRequest,
-			expectedFields: []string{"template_id"},
+			expectedStatus: http.StatusOK,
 		},
 		{
 			name: "missing user_name",
 			request: OrderRequest{
-				TemplateID: "template_1",
-				UserName:   "",
-				UserEmail:  "john@example.com",
+				TemplateID:     "template-123",
+				UserEmail:      "john@example.com",
+				RecipientName:  "Jane Doe",
+				RecipientEmail: "jane@example.com",
 			},
 			expectedStatus: http.StatusBadRequest,
-			expectedFields: []string{"user_name"},
+			expectedError:  "Validation failed",
+			expectedFields: []string{"UserName"},
 		},
 		{
 			name: "invalid user_email",
 			request: OrderRequest{
-				TemplateID: "template_1",
-				UserName:   "John Doe",
-				UserEmail:  "not-an-email",
+				TemplateID:     "template-123",
+				UserName:       "John Doe",
+				UserEmail:      "not-an-email",
+				RecipientName:  "Jane Doe",
+				RecipientEmail: "jane@example.com",
 			},
 			expectedStatus: http.StatusBadRequest,
-			expectedFields: []string{"user_email"},
+			expectedError:  "Validation failed",
+			expectedFields: []string{"UserEmail"},
 		},
 		{
-			name: "valid request",
+			name: "missing template_id",
 			request: OrderRequest{
-				TemplateID: "template_1",
-				UserName:   "John Doe",
-				UserEmail:  "john@example.com",
+				UserName:       "John Doe",
+				UserEmail:      "john@example.com",
+				RecipientName:  "Jane Doe",
+				RecipientEmail: "jane@example.com",
 			},
-			expectedStatus: http.StatusCreated,
-			expectedFields: []string{},
+			expectedStatus: http.StatusBadRequest,
+			expectedError:  "Validation failed",
+			expectedFields: []string{"TemplateID"},
+		},
+		{
+			name: "multiple validation errors",
+			request: OrderRequest{
+				TemplateID:     "template-123",
+				UserEmail:      "invalid-email",
+				RecipientEmail: "also-invalid",
+			},
+			expectedStatus: http.StatusBadRequest,
+			expectedError:  "Validation failed",
+			expectedFields: []string{"UserName", "UserEmail", "RecipientName", "RecipientEmail"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			body, _ := json.Marshal(tt.request)
-			req, _ := http.NewRequest("POST", "/api/orders", bytes.NewBuffer(body))
-			req.Header.Set("Content-Type", "application/json")
-
 			w := httptest.NewRecorder()
-			router.ServeHTTP(w, req)
+			c, _ := gin.CreateTestContext(w)
 
-			if w.Code != tt.expectedStatus {
-				t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
-			}
+			body, _ := json.Marshal(tt.request)
+			c.Request, _ = http.NewRequest("POST", "/api/orders", bytes.NewBuffer(body))
+			c.Request.Header.Set("Content-Type", "application/json")
+
+			SubmitOrder(c)
+
+			assert.Equal(t, tt.expectedStatus, w.Code, "HTTP status code mismatch")
 
 			if tt.expectedStatus == http.StatusBadRequest {
 				var errResp ErrorResponse
-				json.Unmarshal(w.Body.Bytes(), &errResp)
+				err := json.Unmarshal(w.Body.Bytes(), &errResp)
+				assert.NoError(t, err, "Failed to unmarshal error response")
+				assert.Equal(t, tt.expectedError, errResp.Error)
 
-				if errResp.Error == "" {
-					t.Error("expected error message, got empty")
+				var foundFields []string
+				for _, detail := range errResp.Details {
+					foundFields = append(foundFields, detail.Field)
 				}
 
-				if len(errResp.Details) == 0 {
-					t.Error("expected validation error details, got none")
-				}
-
-				// Verify expected fields are in the error details
 				for _, expectedField := range tt.expectedFields {
-					found := false
-					for _, detail := range errResp.Details {
-						if detail.Field == expectedField {
-							found = true
-							break
-						}
-					}
-					if !found {
-						t.Errorf("expected field %s in error details, not found", expectedField)
-					}
+					assert.Contains(t, foundFields, expectedField, "Expected field error not found")
 				}
-			}
-
-			if tt.expectedStatus == http.StatusCreated {
+			} else if tt.expectedStatus == http.StatusOK {
 				var orderResp OrderResponse
-				json.Unmarshal(w.Body.Bytes(), &orderResp)
-
-				if orderResp.OrderID == "" {
-					t.Error("expected order_id in response, got empty")
-				}
-				if orderResp.Status != "pending" {
-					t.Errorf("expected status 'pending', got %s", orderResp.Status)
-				}
+				err := json.Unmarshal(w.Body.Bytes(), &orderResp)
+				assert.NoError(t, err, "Failed to unmarshal order response")
+				assert.NotEmpty(t, orderResp.OrderID, "Order ID should not be empty")
+				assert.Equal(t, "pending", orderResp.Status)
+				assert.NotEmpty(t, orderResp.CreatedAt, "CreatedAt should not be empty")
 			}
 		})
 	}
