@@ -1,11 +1,9 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
 export interface OrderRequest {
   template_id: string;
   user_name: string;
   user_email: string;
-  recipient_name: string;
-  recipient_email: string;
   [key: string]: string;
 }
 
@@ -14,21 +12,20 @@ export interface ValidationError {
   message: string;
 }
 
-export interface ApiErrorResponse {
-  error: string;
+export interface OrderResponse {
+  id: string;
+  status: string;
   details?: ValidationError[];
   message?: string;
 }
 
-export interface SubmitOrderResponse {
-  order_id: string;
-  status: string;
-  created_at: string;
-}
-
-export async function submitOrder(order: OrderRequest): Promise<SubmitOrderResponse> {
+/**
+ * Submit an order to the Go API.
+ * Handles network errors, non-JSON responses, and validation errors gracefully.
+ */
+export async function submitOrder(order: OrderRequest): Promise<OrderResponse> {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/orders`, {
+    const response = await fetch(`${API_URL}/api/orders`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -36,29 +33,49 @@ export async function submitOrder(order: OrderRequest): Promise<SubmitOrderRespo
       body: JSON.stringify(order),
     });
 
+    // If response is not ok, attempt to parse error details
     if (!response.ok) {
-      let errorData: ApiErrorResponse;
+      let errorDetails: ValidationError[] = [];
+      let errorMessage = `API error: ${response.status}`;
+
       try {
-        errorData = await response.json();
+        const errorBody = await response.json();
+        if (errorBody.details && Array.isArray(errorBody.details)) {
+          errorDetails = errorBody.details;
+        }
+        if (errorBody.message) {
+          errorMessage = errorBody.message;
+        }
       } catch (parseError) {
-        // If response body is not JSON (e.g., 500 with HTML), create a generic error
-        const error = new Error(`API error: ${response.status} ${response.statusText}`) as Error & { details?: ValidationError[] };
-        error.details = undefined;
-        throw error;
+        // If response body is not valid JSON (e.g., HTML error page),
+        // fall back to generic error message
+        errorMessage = `Server error: ${response.status} ${response.statusText}`;
       }
 
-      const error = new Error(errorData.error || errorData.message || 'API error') as Error & { details?: ValidationError[] };
-      error.details = errorData.details;
-      throw error;
+      return {
+        id: '',
+        status: 'error',
+        details: errorDetails,
+        message: errorMessage,
+      };
     }
 
+    // Parse successful response
     const data = await response.json();
-    return data as SubmitOrderResponse;
+    return {
+      id: data.id || '',
+      status: data.status || 'success',
+      details: data.details,
+      message: data.message,
+    };
   } catch (error) {
-    // Re-throw with proper error structure
-    if (error instanceof Error) {
-      throw error;
-    }
-    throw new Error('Unknown error occurred');
+    // Network error or other fetch failure
+    const errorMessage = error instanceof Error ? error.message : 'Network error';
+    return {
+      id: '',
+      status: 'error',
+      details: [],
+      message: `Failed to submit order: ${errorMessage}`,
+    };
   }
 }
