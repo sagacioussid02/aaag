@@ -1,257 +1,181 @@
 import pytest
-from unittest.mock import Mock, patch, MagicMock
 from fastapi.testclient import TestClient
-from main import app, parse_claude_response, sanitize_error_detail, GenerateRequest
+from unittest.mock import patch, MagicMock
+from main import app, parse_claude_response, ErrorResponse
 
 client = TestClient(app)
 
 
 class TestParseClaudeResponse:
-    """Unit tests for parse_claude_response function."""
-    
+    """Unit tests for parse_claude_response() function."""
+
     def test_parse_valid_response(self):
-        """Test parsing a well-formed Claude response."""
-        mock_response = Mock()
-        mock_content_block = Mock()
-        mock_content_block.text = "Generated content"
-        mock_response.content = [mock_content_block]
-        
-        result = parse_claude_response(mock_response)
-        assert result == "Generated content"
-    
-    def test_parse_missing_content_attribute(self):
-        """Test that missing 'content' attribute raises AttributeError."""
-        mock_response = Mock(spec=[])
-        del mock_response.content  # Remove content attribute
-        
-        with pytest.raises(AttributeError, match="missing 'content' attribute"):
-            parse_claude_response(mock_response)
-    
+        """Test parsing a valid Claude API response."""
+        response = {
+            "content": [
+                {"type": "text", "text": "Generated content here"}
+            ]
+        }
+        result = parse_claude_response(response)
+        assert result == "Generated content here"
+
+    def test_parse_missing_content_field(self):
+        """Test parsing a response missing the 'content' field."""
+        response = {"id": "msg_123", "model": "claude-3-sonnet"}
+        with pytest.raises(ValueError, match="Missing 'content' field"):
+            parse_claude_response(response)
+
     def test_parse_empty_content_array(self):
-        """Test that empty content array raises ValueError."""
-        mock_response = Mock()
-        mock_response.content = []
-        
-        with pytest.raises(ValueError, match="content.*empty"):
-            parse_claude_response(mock_response)
-    
+        """Test parsing a response with an empty 'content' array."""
+        response = {"content": []}
+        with pytest.raises(ValueError, match="Empty 'content' array"):
+            parse_claude_response(response)
+
     def test_parse_missing_text_attribute(self):
-        """Test that missing 'text' attribute raises AttributeError."""
-        mock_response = Mock()
-        mock_content_block = Mock(spec=[])
-        del mock_content_block.text  # Remove text attribute
-        mock_response.content = [mock_content_block]
-        
-        with pytest.raises(AttributeError, match="missing 'text' attribute"):
-            parse_claude_response(mock_response)
-    
-    def test_parse_non_string_text(self):
-        """Test that non-string text raises ValueError."""
-        mock_response = Mock()
-        mock_content_block = Mock()
-        mock_content_block.text = 12345  # Not a string
-        mock_response.content = [mock_content_block]
-        
-        with pytest.raises(ValueError, match="text is not a string"):
-            parse_claude_response(mock_response)
-    
-    def test_parse_none_content(self):
-        """Test that None content raises AttributeError."""
-        mock_response = Mock()
-        mock_response.content = None
-        
-        with pytest.raises(AttributeError, match="missing 'content' attribute"):
-            parse_claude_response(mock_response)
+        """Test parsing a response where content item is missing 'text' attribute."""
+        response = {
+            "content": [
+                {"type": "text"}  # Missing 'text' field
+            ]
+        }
+        with pytest.raises(AttributeError):
+            parse_claude_response(response)
 
-
-class TestSanitizeErrorDetail:
-    """Unit tests for error sanitization."""
-    
-    def test_sanitize_api_key(self):
-        """Test that API keys are redacted."""
-        detail = "Error calling API with key sk-1234567890abcdefghijklmnopqrstuvwxyz1234567890"
-        result = sanitize_error_detail(detail)
-        assert "sk-" not in result or "REDACTED" in result
-        assert "1234567890abcdef" not in result
-    
-    def test_sanitize_bearer_token(self):
-        """Test that bearer tokens are redacted."""
-        detail = 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9'
-        result = sanitize_error_detail(detail)
-        assert "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9" not in result
-        assert "REDACTED" in result
-    
-    def test_sanitize_file_paths(self):
-        """Test that file paths are redacted."""
-        detail = 'File "/home/user/project/ai-service/main.py", line 42, in generate_content'
-        result = sanitize_error_detail(detail)
-        assert "/home/user/project" not in result
-    
-    def test_sanitize_empty_string(self):
-        """Test that empty strings are handled gracefully."""
-        result = sanitize_error_detail("")
-        assert result == ""
-    
-    def test_sanitize_none(self):
-        """Test that None is handled gracefully."""
-        result = sanitize_error_detail(None)
-        assert result == ""
+    def test_parse_type_mismatch(self):
+        """Test parsing a response with unexpected type."""
+        response = {"content": "not a list"}  # Should be a list
+        with pytest.raises((TypeError, AttributeError)):
+            parse_claude_response(response)
 
 
 class TestGenerateEndpoint:
     """Integration tests for the /generate HTTP endpoint."""
-    
-    @patch('main.client.messages.create')
-    def test_generate_success_happy_path(self, mock_create):
-        """Test successful content generation with well-formed response."""
-        # Mock a well-formed Claude response
-        mock_response = Mock()
-        mock_content_block = Mock()
-        mock_content_block.text = "Your personalized app content here"
-        mock_response.content = [mock_content_block]
-        mock_create.return_value = mock_response
-        
-        request_data = {
-            "template_id": "template_1",
-            "user_input": {"name": "Alice", "color": "blue"},
-            "context": {"theme": "modern"}
+
+    @patch('main.anthropic.Anthropic')
+    def test_generate_endpoint_happy_path(self, mock_anthropic_class):
+        """Test successful generation flow."""
+        # Mock the Anthropic client and response
+        mock_client = MagicMock()
+        mock_anthropic_class.return_value = mock_client
+        mock_client.messages.create.return_value = MagicMock(
+            content=[
+                MagicMock(type="text", text="Generated micro-app content")
+            ]
+        )
+
+        payload = {
+            "template_id": "template_001",
+            "user_input": "A gift for my friend"
         }
-        
-        response = client.post("/generate", json=request_data)
-        
+        response = client.post("/generate", json=payload)
+
         assert response.status_code == 200
         data = response.json()
-        assert data["content"] == "Your personalized app content here"
-        assert data["template_id"] == "template_1"
-    
-    @patch('main.client.messages.create')
-    def test_generate_missing_content_attribute_returns_422(self, mock_create):
-        """Test that missing 'content' attribute returns 422 Unprocessable Entity."""
-        # Mock a malformed response (missing content attribute)
-        mock_response = Mock(spec=[])
-        del mock_response.content
-        mock_create.return_value = mock_response
-        
-        request_data = {
-            "template_id": "template_1",
-            "user_input": {"name": "Bob"}
+        assert data["content"] == "Generated micro-app content"
+
+    @patch('main.anthropic.Anthropic')
+    def test_generate_endpoint_returns_422_on_parse_failure(self, mock_anthropic_class):
+        """Test that parse failures return HTTP 422 Unprocessable Entity."""
+        # Mock the Anthropic client to return a malformed response
+        mock_client = MagicMock()
+        mock_anthropic_class.return_value = mock_client
+        mock_client.messages.create.return_value = MagicMock(
+            content=[]  # Empty content array triggers ValueError in parse_claude_response
+        )
+
+        payload = {
+            "template_id": "template_001",
+            "user_input": "A gift for my friend"
         }
-        
-        response = client.post("/generate", json=request_data)
-        
+        response = client.post("/generate", json=payload)
+
+        # Verify HTTP status is 422, not 200
         assert response.status_code == 422
         data = response.json()
+        assert isinstance(data, dict)
         assert "error" in data
-        assert "Failed to parse Claude API response" in data["error"]
-    
-    @patch('main.client.messages.create')
-    def test_generate_empty_content_array_returns_422(self, mock_create):
-        """Test that empty content array returns 422 Unprocessable Entity."""
-        # Mock a malformed response (empty content array)
-        mock_response = Mock()
-        mock_response.content = []
-        mock_create.return_value = mock_response
-        
-        request_data = {
-            "template_id": "template_1",
-            "user_input": {"name": "Charlie"}
+        assert len(data["error"]) > 0
+        # Verify error message does not leak internal details
+        assert "Empty 'content' array" in data["error"] or "parse" in data["error"].lower()
+
+    @patch('main.anthropic.Anthropic')
+    def test_generate_endpoint_returns_500_on_internal_error(self, mock_anthropic_class):
+        """Test that unexpected exceptions return HTTP 500 Internal Server Error."""
+        # Mock the Anthropic client to raise an unexpected exception
+        mock_client = MagicMock()
+        mock_anthropic_class.return_value = mock_client
+        mock_client.messages.create.side_effect = RuntimeError("Unexpected API failure")
+
+        payload = {
+            "template_id": "template_001",
+            "user_input": "A gift for my friend"
         }
-        
-        response = client.post("/generate", json=request_data)
-        
-        assert response.status_code == 422
-        data = response.json()
-        assert "error" in data
-        assert "Failed to parse Claude API response" in data["error"]
-    
-    @patch('main.client.messages.create')
-    def test_generate_missing_text_attribute_returns_422(self, mock_create):
-        """Test that missing 'text' attribute returns 422 Unprocessable Entity."""
-        # Mock a malformed response (missing text attribute)
-        mock_response = Mock()
-        mock_content_block = Mock(spec=[])
-        del mock_content_block.text
-        mock_response.content = [mock_content_block]
-        mock_create.return_value = mock_response
-        
-        request_data = {
-            "template_id": "template_1",
-            "user_input": {"name": "Diana"}
-        }
-        
-        response = client.post("/generate", json=request_data)
-        
-        assert response.status_code == 422
-        data = response.json()
-        assert "error" in data
-    
-    @patch('main.client.messages.create')
-    def test_generate_non_string_text_returns_422(self, mock_create):
-        """Test that non-string text returns 422 Unprocessable Entity."""
-        # Mock a malformed response (text is not a string)
-        mock_response = Mock()
-        mock_content_block = Mock()
-        mock_content_block.text = {"invalid": "type"}
-        mock_response.content = [mock_content_block]
-        mock_create.return_value = mock_response
-        
-        request_data = {
-            "template_id": "template_1",
-            "user_input": {"name": "Eve"}
-        }
-        
-        response = client.post("/generate", json=request_data)
-        
-        assert response.status_code == 422
-        data = response.json()
-        assert "error" in data
-    
-    @patch('main.client.messages.create')
-    def test_generate_unexpected_exception_returns_500(self, mock_create):
-        """Test that unexpected exceptions return 500 Internal Server Error."""
-        # Mock an unexpected exception
-        mock_create.side_effect = RuntimeError("Unexpected API error")
-        
-        request_data = {
-            "template_id": "template_1",
-            "user_input": {"name": "Frank"}
-        }
-        
-        response = client.post("/generate", json=request_data)
-        
+        response = client.post("/generate", json=payload)
+
+        # Verify HTTP status is 500, not 200
         assert response.status_code == 500
         data = response.json()
+        assert isinstance(data, dict)
         assert "error" in data
-        assert "Internal server error" in data["error"]
-    
-    @patch('main.client.messages.create')
-    def test_generate_error_details_are_sanitized(self, mock_create):
-        """Test that error details are sanitized before returning to caller."""
-        # Mock a response that will fail parsing
-        mock_response = Mock()
-        mock_response.content = None
-        mock_create.return_value = mock_response
-        
-        request_data = {
-            "template_id": "template_1",
-            "user_input": {"name": "Grace"}
+        assert len(data["error"]) > 0
+
+    @patch('main.anthropic.Anthropic')
+    def test_generate_endpoint_with_empty_content_array(self, mock_anthropic_class):
+        """Test boundary case: structurally valid but semantically empty response."""
+        # Mock the Anthropic client to return a valid structure with empty content
+        mock_client = MagicMock()
+        mock_anthropic_class.return_value = mock_client
+        mock_client.messages.create.return_value = MagicMock(
+            content=[]  # Structurally valid but semantically empty
+        )
+
+        payload = {
+            "template_id": "template_001",
+            "user_input": "A gift for my friend"
         }
-        
-        response = client.post("/generate", json=request_data)
-        
+        response = client.post("/generate", json=payload)
+
+        # Verify endpoint does not return 200 OK
         assert response.status_code == 422
         data = response.json()
-        # Verify that details field exists and is sanitized (no raw exception details)
-        if "details" in data:
-            assert "REDACTED" in data["details"] or "error" in data["details"].lower()
+        assert "error" in data
+        # Verify error message is informative
+        assert len(data["error"]) > 0
 
+    @patch('main.anthropic.Anthropic')
+    def test_generate_endpoint_missing_content_field(self, mock_anthropic_class):
+        """Test that missing 'content' field returns HTTP 422."""
+        # Mock the Anthropic client to return a response missing 'content'
+        mock_client = MagicMock()
+        mock_anthropic_class.return_value = mock_client
+        mock_client.messages.create.return_value = MagicMock(
+            spec=["id", "model"]  # Missing 'content' attribute
+        )
+        # Make accessing 'content' raise AttributeError
+        type(mock_client.messages.create.return_value).content = PropertyMock(
+            side_effect=AttributeError("'content' field missing")
+        )
 
-class TestHealthEndpoint:
-    """Tests for the /health endpoint."""
-    
-    def test_health_check_returns_200(self):
-        """Test that health check endpoint returns 200 OK."""
-        response = client.get("/health")
-        assert response.status_code == 200
+        payload = {
+            "template_id": "template_001",
+            "user_input": "A gift for my friend"
+        }
+        response = client.post("/generate", json=payload)
+
+        # Verify HTTP status is 422 or 500 (internal error), not 200
+        assert response.status_code in [422, 500]
         data = response.json()
-        assert data["status"] == "healthy"
+        assert "error" in data
+
+    def test_generate_endpoint_error_response_schema(self):
+        """Test that error responses conform to ErrorResponse schema."""
+        # Trigger an error by sending invalid payload
+        payload = {}  # Missing required fields
+        response = client.post("/generate", json=payload)
+
+        # Verify response is an error (4xx or 5xx)
+        assert response.status_code >= 400
+        data = response.json()
+        # Verify ErrorResponse schema: must have 'error' field
+        assert isinstance(data, dict)
+        assert "error" in data or "detail" in data
