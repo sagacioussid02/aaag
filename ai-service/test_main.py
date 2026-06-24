@@ -1,217 +1,198 @@
 import pytest
+from unittest.mock import Mock, patch, MagicMock
+from main import app, parse_claude_response, GenerateRequest, ErrorResponse
 from fastapi.testclient import TestClient
-from unittest.mock import patch, MagicMock
-import anthropic
-from main import app, sanitize_error_detail
 
 client = TestClient(app)
 
 
-class TestGenerateContentSuccess:
-    """Test successful content generation."""
+class TestParseClaudeResponse:
+    """Test suite for Claude response parsing with error handling."""
     
-    def test_generate_content_success(self):
-        """Test successful content generation returns 200 with content."""
-        mock_message = MagicMock()
-        mock_message.content = [MagicMock(text="Generated content")]
+    def test_parse_valid_response(self):
+        """Test parsing a valid Claude response."""
+        mock_response = Mock()
+        mock_response.content = [Mock(text="Generated content here")]
+        mock_response.model = "claude-3-5-sonnet-20241022"
+        mock_response.usage = Mock(input_tokens=10, output_tokens=20)
         
-        with patch('main.anthropic.Anthropic') as mock_client_class:
-            mock_instance = MagicMock()
-            mock_client_class.return_value = mock_instance
-            mock_instance.messages.create.return_value = mock_message
-            
-            response = client.post("/generate", json={"prompt": "Test prompt"})
-            
-            assert response.status_code == 200
-            assert response.json() == {"content": "Generated content"}
-
-
-class TestGenerateContentInputValidation:
-    """Test input validation."""
-    
-    def test_generate_content_empty_prompt(self):
-        """Test that empty prompt returns 400."""
-        response = client.post("/generate", json={"prompt": ""})
-        assert response.status_code == 400
-        assert "empty" in response.json()["detail"].lower()
-    
-    def test_generate_content_whitespace_only_prompt(self):
-        """Test that whitespace-only prompt returns 400."""
-        response = client.post("/generate", json={"prompt": "   \n\t  "})
-        assert response.status_code == 400
-        assert "empty" in response.json()["detail"].lower()
-
-
-class TestGenerateContentErrorHandling:
-    """Test error handling for Anthropic SDK exceptions."""
-    
-    def test_generate_content_api_status_error(self):
-        """Test APIStatusError (upstream API error) maps to 502."""
-        with patch('main.anthropic.Anthropic') as mock_client_class:
-            mock_instance = MagicMock()
-            mock_client_class.return_value = mock_instance
-            mock_instance.messages.create.side_effect = anthropic.APIStatusError(
-                message="Service Unavailable",
-                response=MagicMock(status_code=503),
-                body={}
-            )
-            
-            response = client.post("/generate", json={"prompt": "Test"})
-            
-            assert response.status_code == 502
-            assert "Service Unavailable" in response.json()["detail"]
-    
-    def test_generate_content_bad_request_error(self):
-        """Test BadRequestError maps to 400."""
-        with patch('main.anthropic.Anthropic') as mock_client_class:
-            mock_instance = MagicMock()
-            mock_client_class.return_value = mock_instance
-            mock_instance.messages.create.side_effect = anthropic.BadRequestError(
-                message="Invalid request",
-                response=MagicMock(status_code=400),
-                body={}
-            )
-            
-            response = client.post("/generate", json={"prompt": "Test"})
-            
-            assert response.status_code == 400
-            assert "Invalid request" in response.json()["detail"]
-    
-    def test_generate_content_authentication_error(self):
-        """Test AuthenticationError maps to 401 with upstream clarification."""
-        with patch('main.anthropic.Anthropic') as mock_client_class:
-            mock_instance = MagicMock()
-            mock_client_class.return_value = mock_instance
-            mock_instance.messages.create.side_effect = anthropic.AuthenticationError(
-                message="Invalid API key",
-                response=MagicMock(status_code=401),
-                body={}
-            )
-            
-            response = client.post("/generate", json={"prompt": "Test"})
-            
-            assert response.status_code == 401
-            detail = response.json()["detail"]
-            assert "Upstream authentication failed" in detail
-            assert "Invalid API key" in detail
-    
-    def test_generate_content_rate_limit_error(self):
-        """Test RateLimitError maps to 429."""
-        with patch('main.anthropic.Anthropic') as mock_client_class:
-            mock_instance = MagicMock()
-            mock_client_class.return_value = mock_instance
-            mock_instance.messages.create.side_effect = anthropic.RateLimitError(
-                message="Rate limit exceeded",
-                response=MagicMock(status_code=429),
-                body={}
-            )
-            
-            response = client.post("/generate", json={"prompt": "Test"})
-            
-            assert response.status_code == 429
-            assert "Rate limit exceeded" in response.json()["detail"]
-    
-    def test_generate_content_generic_api_error(self):
-        """Test generic APIError maps to 500."""
-        with patch('main.anthropic.Anthropic') as mock_client_class:
-            mock_instance = MagicMock()
-            mock_client_class.return_value = mock_instance
-            mock_instance.messages.create.side_effect = anthropic.APIError(
-                message="Internal server error"
-            )
-            
-            response = client.post("/generate", json={"prompt": "Test"})
-            
-            assert response.status_code == 500
-            assert "Internal server error" in response.json()["detail"]
-    
-    def test_generate_content_unexpected_exception(self):
-        """Test unexpected exceptions map to 500."""
-        with patch('main.anthropic.Anthropic') as mock_client_class:
-            mock_instance = MagicMock()
-            mock_client_class.return_value = mock_instance
-            mock_instance.messages.create.side_effect = ValueError("Unexpected error")
-            
-            response = client.post("/generate", json={"prompt": "Test"})
-            
-            assert response.status_code == 500
-            assert "Unexpected error" in response.json()["detail"]
-
-
-class TestGenerateContentEdgeCases:
-    """Test edge cases in content generation."""
-    
-    def test_generate_content_empty_content_blocks(self):
-        """Test that empty content blocks return 500."""
-        mock_message = MagicMock()
-        mock_message.content = []
+        result = parse_claude_response(mock_response)
         
-        with patch('main.anthropic.Anthropic') as mock_client_class:
-            mock_instance = MagicMock()
-            mock_client_class.return_value = mock_instance
-            mock_instance.messages.create.return_value = mock_message
-            
-            response = client.post("/generate", json={"prompt": "Test"})
-            
-            assert response.status_code == 500
-            assert "empty content" in response.json()["detail"].lower()
+        assert result["content"] == "Generated content here"
+        assert result["metadata"]["model"] == "claude-3-5-sonnet-20241022"
+        assert result["metadata"]["usage"]["input_tokens"] == 10
+        assert result["metadata"]["usage"]["output_tokens"] == 20
     
-    def test_generate_content_non_text_block(self):
-        """Test that non-text content blocks return 500."""
-        mock_message = MagicMock()
-        mock_block = MagicMock()
-        # Remove the 'text' attribute to simulate non-text block
-        del mock_block.text
-        mock_message.content = [mock_block]
+    def test_parse_response_missing_content_attribute(self):
+        """Test parsing fails when response lacks 'content' attribute."""
+        mock_response = Mock(spec=[])
         
-        with patch('main.anthropic.Anthropic') as mock_client_class:
-            mock_instance = MagicMock()
-            mock_client_class.return_value = mock_instance
-            mock_instance.messages.create.return_value = mock_message
-            
-            response = client.post("/generate", json={"prompt": "Test"})
-            
-            assert response.status_code == 500
-            assert "non-text" in response.json()["detail"].lower()
+        with pytest.raises(ValueError, match="Malformed Claude API response"):
+            parse_claude_response(mock_response)
+    
+    def test_parse_response_empty_content_array(self):
+        """Test parsing fails when content array is empty."""
+        mock_response = Mock()
+        mock_response.content = []
+        
+        with pytest.raises(ValueError, match="Malformed Claude API response"):
+            parse_claude_response(mock_response)
+    
+    def test_parse_response_missing_text_attribute(self):
+        """Test parsing fails when content block lacks 'text' attribute."""
+        mock_response = Mock()
+        mock_content_block = Mock(spec=[])
+        mock_response.content = [mock_content_block]
+        
+        with pytest.raises(ValueError, match="Malformed Claude API response"):
+            parse_claude_response(mock_response)
+    
+    def test_parse_response_text_not_string(self):
+        """Test parsing fails when text is not a string."""
+        mock_response = Mock()
+        mock_response.content = [Mock(text=12345)]  # Not a string
+        
+        with pytest.raises(ValueError, match="Malformed Claude API response"):
+            parse_claude_response(mock_response)
+    
+    def test_parse_response_empty_text(self):
+        """Test parsing fails when text is empty or whitespace-only."""
+        mock_response = Mock()
+        mock_response.content = [Mock(text="   ")]  # Whitespace only
+        
+        with pytest.raises(ValueError, match="Malformed Claude API response"):
+            parse_claude_response(mock_response)
+    
+    def test_parse_response_missing_usage(self):
+        """Test parsing succeeds even when usage is missing (graceful degradation)."""
+        mock_response = Mock()
+        mock_response.content = [Mock(text="Generated content")]
+        mock_response.model = "claude-3-5-sonnet-20241022"
+        # No usage attribute
+        del mock_response.usage
+        
+        result = parse_claude_response(mock_response)
+        
+        assert result["content"] == "Generated content"
+        assert result["metadata"]["usage"]["input_tokens"] == 0
+        assert result["metadata"]["usage"]["output_tokens"] == 0
 
 
-class TestSanitizeErrorDetail:
-    """Test error message sanitization."""
+class TestGenerateEndpoint:
+    """Test suite for /generate endpoint error handling."""
     
-    def test_sanitize_api_key_pattern(self):
-        """Test that API keys are redacted."""
-        error = "Error with API key sk-1234567890abcdefghij"
-        sanitized = sanitize_error_detail(error)
-        assert "sk-1234567890abcdefghij" not in sanitized
-        assert "[REDACTED_API_KEY]" in sanitized
-    
-    def test_sanitize_stack_trace(self):
-        """Test that stack traces are redacted."""
-        error = "Error occurred\n  at function_name\n  File /path/to/file.py"
-        sanitized = sanitize_error_detail(error)
-        assert "at function_name" not in sanitized
-        assert "[STACK_TRACE_REDACTED]" in sanitized
-    
-    def test_sanitize_internal_paths(self):
-        """Test that internal file paths are redacted."""
-        error = "Error in /home/user/project/main.py"
-        sanitized = sanitize_error_detail(error)
-        assert "/home/user/project/main.py" not in sanitized
-        assert "[INTERNAL_PATH_REDACTED]" in sanitized
-    
-    def test_sanitize_auth_headers(self):
-        """Test that auth headers are redacted."""
-        error = "Request failed with Authorization: Bearer token123"
-        sanitized = sanitize_error_detail(error)
-        assert "Bearer token123" not in sanitized
-        assert "[REDACTED_HEADER]" in sanitized
-    
-    def test_sanitize_does_not_leak_sensitive_data(self):
-        """Test that error responses do not contain sensitive patterns."""
-        error = "API key sk-abcdefghij1234567890 failed with Authorization: Bearer xyz"
-        sanitized = sanitize_error_detail(error)
+    @patch('main.client.messages.create')
+    def test_generate_success(self, mock_create):
+        """Test successful content generation."""
+        mock_response = Mock()
+        mock_response.content = [Mock(text="Generated personalized content")]
+        mock_response.model = "claude-3-5-sonnet-20241022"
+        mock_response.usage = Mock(input_tokens=10, output_tokens=20)
+        mock_create.return_value = mock_response
         
-        # Verify no API keys remain
-        assert not any(pattern in sanitized for pattern in ["sk-", "Bearer"])
-        # Verify redaction markers are present
-        assert "[REDACTED" in sanitized
+        request = GenerateRequest(
+            template_id="template-1",
+            user_input={"name": "John", "theme": "blue"}
+        )
+        
+        response = client.post("/generate", json=request.model_dump())
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert data["content"] == "Generated personalized content"
+        assert data["metadata"]["model"] == "claude-3-5-sonnet-20241022"
+    
+    @patch('main.client.messages.create')
+    def test_generate_malformed_response(self, mock_create):
+        """Test handling of malformed Claude response."""
+        mock_response = Mock()
+        mock_response.content = []  # Empty content array
+        mock_create.return_value = mock_response
+        
+        request = GenerateRequest(
+            template_id="template-1",
+            user_input={"name": "John"}
+        )
+        
+        response = client.post("/generate", json=request.model_dump())
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert "error" in data
+        assert "Failed to parse Claude response" in data["error"]
+    
+    @patch('main.client.messages.create')
+    def test_generate_api_error(self, mock_create):
+        """Test handling of Anthropic API errors."""
+        import anthropic
+        mock_create.side_effect = anthropic.APIError("API rate limit exceeded")
+        
+        request = GenerateRequest(
+            template_id="template-1",
+            user_input={"name": "John"}
+        )
+        
+        response = client.post("/generate", json=request.model_dump())
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert "error" in data
+        assert "Claude API request failed" in data["error"]
+    
+    def test_generate_missing_template_id(self):
+        """Test validation error when template_id is missing."""
+        request_data = {
+            "user_input": {"name": "John"}
+        }
+        
+        response = client.post("/generate", json=request_data)
+        
+        # FastAPI validation should catch this
+        assert response.status_code == 422
+    
+    def test_generate_missing_user_input(self):
+        """Test validation error when user_input is missing."""
+        request_data = {
+            "template_id": "template-1"
+        }
+        
+        response = client.post("/generate", json=request_data)
+        
+        # FastAPI validation should catch this
+        assert response.status_code == 422
+    
+    @patch('main.client.messages.create')
+    def test_generate_response_text_not_string(self, mock_create):
+        """Test handling when Claude response text is not a string."""
+        mock_response = Mock()
+        mock_response.content = [Mock(text=None)]  # Not a string
+        mock_create.return_value = mock_response
+        
+        request = GenerateRequest(
+            template_id="template-1",
+            user_input={"name": "John"}
+        )
+        
+        response = client.post("/generate", json=request.model_dump())
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert "error" in data
+        assert "Failed to parse Claude response" in data["error"]
+
+
+class TestHealthEndpoint:
+    """Test suite for /health endpoint."""
+    
+    def test_health_check(self):
+        """Test health check endpoint is responsive."""
+        response = client.get("/health")
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "healthy"
+        assert data["service"] == "ai-service"
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
