@@ -120,7 +120,7 @@ export default function WizardPage() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [currentStep, transitionToStep, clearError]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-8">
