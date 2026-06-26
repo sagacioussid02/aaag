@@ -1,59 +1,81 @@
-import { CreateOrderRequest, CreateOrderResponse } from '@/types/order';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
-
-if (!API_BASE_URL) {
-  throw new Error(
-    'NEXT_PUBLIC_API_URL environment variable is required. Please set it in your .env.local file.'
-  );
+export interface OrderRequest {
+  template_id: string;
+  user_name: string;
+  user_email: string;
+  [key: string]: string;
 }
 
-export class ApiError extends Error {
-  constructor(
-    public statusCode: number,
-    public fieldErrors?: Record<string, string>,
-    message?: string
-  ) {
-    super(message || `API Error: ${statusCode}`);
-    this.name = 'ApiError';
-  }
+export interface ValidationError {
+  field: string;
+  message: string;
 }
 
-export async function createOrder(
-  data: CreateOrderRequest
-): Promise<CreateOrderResponse> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+export interface OrderResponse {
+  id: string;
+  status: string;
+  details?: ValidationError[];
+  message?: string;
+}
 
+/**
+ * Submit an order to the Go API.
+ * Handles network errors, non-JSON responses, and validation errors gracefully.
+ */
+export async function submitOrder(order: OrderRequest): Promise<OrderResponse> {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/orders`, {
+    const response = await fetch(`${API_URL}/api/orders`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(data),
-      signal: controller.signal,
+      body: JSON.stringify(order),
     });
 
+    // If response is not ok, attempt to parse error details
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new ApiError(
-        response.status,
-        errorData.fieldErrors,
-        errorData.message || `Order creation failed with status ${response.status}`
-      );
+      let errorDetails: ValidationError[] = [];
+      let errorMessage = `API error: ${response.status}`;
+
+      try {
+        const errorBody = await response.json();
+        if (errorBody.details && Array.isArray(errorBody.details)) {
+          errorDetails = errorBody.details;
+        }
+        if (errorBody.message) {
+          errorMessage = errorBody.message;
+        }
+      } catch (parseError) {
+        // If response body is not valid JSON (e.g., HTML error page),
+        // fall back to generic error message
+        errorMessage = `Server error: ${response.status} ${response.statusText}`;
+      }
+
+      return {
+        id: '',
+        status: 'error',
+        details: errorDetails,
+        message: errorMessage,
+      };
     }
 
-    return await response.json();
+    // Parse successful response
+    const data = await response.json();
+    return {
+      id: data.id || '',
+      status: data.status || 'success',
+      details: data.details,
+      message: data.message,
+    };
   } catch (error) {
-    if (error instanceof ApiError) {
-      throw error;
-    }
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new ApiError(0, undefined, 'Request timeout. Please check your connection and try again.');
-    }
-    throw new ApiError(0, undefined, error instanceof Error ? error.message : 'Unknown error occurred');
-  } finally {
-    clearTimeout(timeoutId);
+    // Network error or other fetch failure
+    const errorMessage = error instanceof Error ? error.message : 'Network error';
+    return {
+      id: '',
+      status: 'error',
+      details: [],
+      message: `Failed to submit order: ${errorMessage}`,
+    };
   }
 }
