@@ -1,165 +1,275 @@
 'use client';
 
 import { useState } from 'react';
-import { generateMicroApp } from '@/lib/api-client';
+import { WizardFormData } from '@/types/order';
+import { createOrder, ApiError } from '@/lib/api';
+import ErrorDisplay from '@/components/error-display';
 
-interface GeneratedApp {
-  title: string;
-  description: string;
-  code: string;
-  gift_url?: string;
-}
+const TEMPLATES = [
+  { id: 'template_1', name: 'Birthday Gift' },
+  { id: 'template_2', name: 'Anniversary' },
+  { id: 'template_3', name: 'Thank You' },
+];
+
+const STEPS = [
+  { title: 'Select Template', description: 'Choose a template for your gift' },
+  { title: 'Personalize', description: 'Add recipient details and message' },
+  { title: 'Review & Pay', description: 'Review and complete payment' },
+];
 
 export default function WizardPage() {
-  const [formData, setFormData] = useState({
+  const [currentStep, setCurrentStep] = useState(0);
+  const [formData, setFormData] = useState<WizardFormData>({
+    template_id: '',
     recipient_name: '',
-    occasion: '',
-    theme: '',
-    custom_message: '',
+    email: '',
+    gift_message: '',
   });
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<GeneratedApp | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ message: string; field?: string } | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
-    const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-    setResult(null);
-
-    try {
-      const response = await generateMicroApp(formData);
-      setResult(response);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to generate micro-app');
-    } finally {
-      setLoading(false);
+  const handleInputChange = (
+    field: keyof WizardFormData,
+    value: WizardFormData[keyof WizardFormData]
+  ) => {
+    setFormData((prev) => ({ ...prev, [field]: value }));
+    // Clear error when user corrects the field
+    if (error?.field === field) {
+      setError(null);
     }
   };
 
+  const validateStep = (step: number): boolean => {
+    setError(null);
+
+    if (step === 0) {
+      if (!formData.template_id) {
+        setError({ message: 'Please select a template', field: 'template_id' });
+        return false;
+      }
+    } else if (step === 1) {
+      if (!formData.recipient_name) {
+        setError({ message: 'Recipient name is required', field: 'recipient_name' });
+        return false;
+      }
+      if (!formData.gift_message) {
+        setError({ message: 'Gift message is required', field: 'gift_message' });
+        return false;
+      }
+    } else if (step === 2) {
+      if (!formData.email) {
+        setError({ message: 'Email is required', field: 'email' });
+        return false;
+      }
+      // Basic email validation
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(formData.email)) {
+        setError({ message: 'Please enter a valid email address', field: 'email' });
+        return false;
+      }
+    }
+
+    return true;
+  };
+
+  const handleNext = () => {
+    if (validateStep(currentStep)) {
+      setCurrentStep((prev) => Math.min(prev + 1, STEPS.length - 1));
+    }
+  };
+
+  const handlePrevious = () => {
+    setCurrentStep((prev) => Math.max(prev - 1, 0));
+  };
+
+  const handleSubmit = async () => {
+    if (!validateStep(currentStep)) {
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const response = await createOrder({
+        template_id: formData.template_id,
+        recipient_name: formData.recipient_name,
+        email: formData.email,
+        gift_message: formData.gift_message,
+        wizard_data: formData.additionalData || {},
+      });
+
+      // Success: redirect to order confirmation or dashboard
+      console.log('Order created:', response);
+      // TODO: Redirect to confirmation page or dashboard
+    } catch (err) {
+      if (err instanceof ApiError) {
+        if (err.fieldErrors) {
+          // Display first field error
+          const firstField = Object.keys(err.fieldErrors)[0];
+          setError({
+            message: err.fieldErrors[firstField],
+            field: firstField,
+          });
+        } else {
+          setError({ message: err.message });
+        }
+      } else {
+        setError({ message: 'An unexpected error occurred. Please try again.' });
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  }, [currentStep, transitionToStep, clearError]);
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-50 to-blue-50 p-8">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-8">
       <div className="max-w-2xl mx-auto">
-        <h1 className="text-4xl font-bold text-gray-900 mb-2">Create a Gift Micro-App</h1>
-        <p className="text-gray-600 mb-8">Personalize a micro-app for someone special in minutes.</p>
-
-        {!result ? (
-          <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow-lg p-8 space-y-6">
-            <div>
-              <label htmlFor="recipient_name" className="block text-sm font-medium text-gray-700 mb-2">
-                Recipient Name
-              </label>
-              <input
-                type="text"
-                id="recipient_name"
-                name="recipient_name"
-                value={formData.recipient_name}
-                onChange={handleChange}
-                required
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                placeholder="e.g., Sarah"
-              />
-            </div>
-
-            <div>
-              <label htmlFor="occasion" className="block text-sm font-medium text-gray-700 mb-2">
-                Occasion
-              </label>
-              <select
-                id="occasion"
-                name="occasion"
-                value={formData.occasion}
-                onChange={handleChange}
-                required
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+        {/* Progress Indicator */}
+        <div className="mb-8">
+          <div className="flex justify-between mb-4">
+            {STEPS.map((step, index) => (
+              <div
+                key={index}
+                className={`flex-1 text-center ${
+                  index < currentStep ? 'opacity-100' : index === currentStep ? 'opacity-100' : 'opacity-50'
+                }`}
               >
-                <option value="">Select an occasion</option>
-                <option value="birthday">Birthday</option>
-                <option value="anniversary">Anniversary</option>
-                <option value="graduation">Graduation</option>
-                <option value="promotion">Promotion</option>
-                <option value="thank_you">Thank You</option>
-              </select>
-            </div>
-
-            <div>
-              <label htmlFor="theme" className="block text-sm font-medium text-gray-700 mb-2">
-                Theme
-              </label>
-              <select
-                id="theme"
-                name="theme"
-                value={formData.theme}
-                onChange={handleChange}
-                required
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-              >
-                <option value="">Select a theme</option>
-                <option value="adventure">Adventure</option>
-                <option value="wellness">Wellness</option>
-                <option value="creativity">Creativity</option>
-                <option value="learning">Learning</option>
-              </select>
-            </div>
-
-            <div>
-              <label htmlFor="custom_message" className="block text-sm font-medium text-gray-700 mb-2">
-                Custom Message (Optional)
-              </label>
-              <textarea
-                id="custom_message"
-                name="custom_message"
-                value={formData.custom_message}
-                onChange={handleChange}
-                rows={4}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                placeholder="Add a personal message..."
-              />
-            </div>
-
-            {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">{error}</div>}
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-purple-600 hover:bg-purple-700 disabled:bg-gray-400 text-white font-semibold py-3 rounded-lg transition"
-            >
-              {loading ? 'Generating...' : 'Generate Micro-App'}
-            </button>
-          </form>
-        ) : (
-          <div className="bg-white rounded-lg shadow-lg p-8">
-            <h2 className="text-2xl font-bold text-gray-900 mb-4">{result.title}</h2>
-            <p className="text-gray-600 mb-6">{result.description}</p>
-            <div className="bg-gray-50 rounded-lg p-4 mb-6 font-mono text-sm overflow-auto max-h-64">
-              <pre>{result.code}</pre>
-            </div>
-            {result.gift_url && (
-              <a
-                href={result.gift_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-block bg-purple-600 hover:bg-purple-700 text-white font-semibold py-2 px-6 rounded-lg transition"
-              >
-                View Micro-App
-              </a>
-            )}
-            <button
-              onClick={() => {
-                setResult(null);
-                setFormData({ recipient_name: '', occasion: '', theme: '', custom_message: '' });
-              }}
-              className="ml-4 bg-gray-300 hover:bg-gray-400 text-gray-900 font-semibold py-2 px-6 rounded-lg transition"
-            >
-              Create Another
-            </button>
+                <div
+                  className={`w-10 h-10 rounded-full flex items-center justify-center mx-auto mb-2 ${
+                    index <= currentStep
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-gray-300 text-gray-600'
+                  }`}
+                >
+                  {index + 1}
+                </div>
+                <p className="text-sm font-medium">{step.title}</p>
+              </div>
+            ))}
           </div>
-        )}
+          <div className="w-full bg-gray-200 rounded-full h-2">
+            <div
+              className="bg-indigo-600 h-2 rounded-full transition-all duration-300"
+              style={{ width: `${((currentStep + 1) / STEPS.length) * 100}%` }}
+            />
+          </div>
+        </div>
+
+        {/* Step Content */}
+        <div className="bg-white rounded-lg shadow-lg p-8 mb-8">
+          <h2 className="text-2xl font-bold mb-2">{STEPS[currentStep].title}</h2>
+          <p className="text-gray-600 mb-6">{STEPS[currentStep].description}</p>
+
+          {error && <ErrorDisplay error={error} />}
+
+          {/* Step 0: Select Template */}
+          {currentStep === 0 && (
+            <div className="space-y-4">
+              {TEMPLATES.map((template) => (
+                <label
+                  key={template.id}
+                  className="flex items-center p-4 border-2 rounded-lg cursor-pointer hover:bg-gray-50 transition"
+                  style={{
+                    borderColor: formData.template_id === template.id ? '#4f46e5' : '#e5e7eb',
+                    backgroundColor: formData.template_id === template.id ? '#eef2ff' : 'transparent',
+                  }}
+                >
+                  <input
+                    type="radio"
+                    name="template"
+                    value={template.id}
+                    checked={formData.template_id === template.id}
+                    onChange={(e) => handleInputChange('template_id', e.target.value)}
+                    className="w-4 h-4"
+                  />
+                  <span className="ml-3 font-medium">{template.name}</span>
+                </label>
+              ))}
+            </div>
+          )}
+
+          {/* Step 1: Personalize */}
+          {currentStep === 1 && (
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Recipient Name
+                </label>
+                <input
+                  type="text"
+                  value={formData.recipient_name}
+                  onChange={(e) => handleInputChange('recipient_name', e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  placeholder="Enter recipient's name"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Gift Message
+                </label>
+                <textarea
+                  value={formData.gift_message}
+                  onChange={(e) => handleInputChange('gift_message', e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  placeholder="Write a personalized message"
+                  rows={4}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Step 2: Review & Pay */}
+          {currentStep === 2 && (
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Email Address
+                </label>
+                <input
+                  type="email"
+                  value={formData.email}
+                  onChange={(e) => handleInputChange('email', e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  placeholder="recipient@example.com"
+                />
+              </div>
+              <div className="bg-gray-50 p-4 rounded-lg mt-6">
+                <h3 className="font-semibold mb-2">Order Summary</h3>
+                <p className="text-sm text-gray-600">Template: {formData.template_id}</p>
+                <p className="text-sm text-gray-600">Recipient: {formData.recipient_name}</p>
+                <p className="text-sm text-gray-600">Email: {formData.email}</p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Navigation Buttons */}
+        <div className="flex justify-between">
+          <button
+            onClick={handlePrevious}
+            disabled={currentStep === 0}
+            className="px-6 py-2 border border-gray-300 rounded-lg font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Previous
+          </button>
+          {currentStep < STEPS.length - 1 ? (
+            <button
+              onClick={handleNext}
+              className="px-6 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700"
+            >
+              Next
+            </button>
+          ) : (
+            <button
+              onClick={handleSubmit}
+              disabled={isLoading}
+              className="px-6 py-2 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isLoading ? 'Processing...' : 'Submit Order'}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

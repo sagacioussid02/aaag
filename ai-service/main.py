@@ -4,11 +4,14 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import anthropic
 
-app = FastAPI()
+from fastapi import FastAPI, HTTPException, status
+from pydantic import BaseModel, Field
+from anthropic import Anthropic, APIError, APIConnectionError, APITimeoutError
 
 # Initialize Anthropic client
 client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
+app = FastAPI(title="AaaG AI Service", version="1.0.0")
 
 class GenerateRequest(BaseModel):
     """Request schema for /generate endpoint."""
@@ -105,7 +108,7 @@ def generate(request: GenerateRequest):
         # Call Claude API
         message = client.messages.create(
             model="claude-3-5-sonnet-20241022",
-            max_tokens=1024,
+            max_tokens=2000,
             messages=[
                 {
                     "role": "user",
