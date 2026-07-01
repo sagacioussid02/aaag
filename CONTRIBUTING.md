@@ -37,21 +37,23 @@ All TODO and FIXME annotations in the codebase are categorized using the framewo
 
 When adding a new TODO or FIXME:
 1. Include a brief description of the issue.
-2. Tag it with the appropriate severity (critical, high, medium, low).
-3. Indicate the path type (payment, auth, data, ui, infra, other).
-4. If it affects payment or auth paths, note that it is blocked from fixing until CI is green.
+2. Tag it with the appropriate severity (P1, P2, or P3).
+3. Indicate the path type (payment, ai_generation, auth, data, ui, infra, other).
+4. If it affects payment or AI generation paths, note that it is blocked from fixing until CI is green.
 5. Reference the tracked issue number (e.g., #AAAG-001) and assign an owner and deadline.
 
 Example:
 ```go
-// TODO(critical, payment): validate JWT expiry before processing requests
+// TODO(P1, payment): validate JWT expiry before processing requests
 // Issue: #AAAG-002
 // Owner: senior_engineer
 // Deadline: Sprint 8
-// Blocked until CI is green and auth path is fully tested.
+// Blocked: yes — waiting for auth tests to be written
 ```
 
 For the complete triage framework and categorization rules, see [docs/TRIAGE_FRAMEWORK.md](docs/TRIAGE_FRAMEWORK.md).
+
+For the current triage audit results, see [docs/TRIAGE_REPORT.md](docs/TRIAGE_REPORT.md).
 
 ## Code Review Standards
 
