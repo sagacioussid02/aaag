@@ -1,155 +1,193 @@
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ValidationError
+import logging
 import os
-import re
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-import anthropic
+from anthropic import Anthropic, APIError, APITimeoutError, APIConnectionError
 
-from fastapi import FastAPI, HTTPException, status
-from pydantic import BaseModel, Field
-from anthropic import Anthropic, APIError, APIConnectionError, APITimeoutError
+app = FastAPI()
+logger = logging.getLogger(__name__)
 
 # Initialize Anthropic client
-client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-app = FastAPI(title="AaaG AI Service", version="1.0.0")
 
 class GenerateRequest(BaseModel):
-    """Request schema for /generate endpoint."""
-    template_id: str
+    """Request schema for content generation."""
     user_input: str
+    template_context: str
+    template_id: str
 
 
 class ErrorResponse(BaseModel):
-    """Structured error response schema."""
+    """Structured error response."""
     error: str
+    message: str
+    status_code: int
 
 
-class GenerateResponse(BaseModel):
-    """Response schema for /generate endpoint."""
+class SuccessResponse(BaseModel):
+    """Structured success response."""
     content: str
+    template_id: str
 
 
-def sanitize_error_detail(error_message: str) -> str:
+@app.exception_handler(ValidationError)
+async def validation_exception_handler(request: Request, exc: ValidationError):
+    """Handle Pydantic validation errors."""
+    logger.warning(f"Validation error: {exc}")
+    return JSONResponse(
+        status_code=400,
+        content={
+            "error": "validation_error",
+            "message": "Invalid request: missing or malformed fields",
+            "status_code": 400,
+        },
+    )
+
+
+@app.post("/generate")
+async def generate(request: GenerateRequest):
     """
-    Sanitize error details before returning to caller.
-    Removes API keys, tokens, and stack traces to prevent information leakage.
-    """
-    sanitized = error_message
+    Generate personalized content using Claude.
     
-    # Remove API keys (Bearer tokens, x-api-key patterns)
-    sanitized = re.sub(r'Bearer\s+[\w\-\.]+', '[REDACTED_TOKEN]', sanitized)
-    sanitized = re.sub(r'api[_-]?key[\s:=]+[\w\-\.]+', '[REDACTED_API_KEY]', sanitized, flags=re.IGNORECASE)
-    sanitized = re.sub(r'sk-[\w\-\.]+', '[REDACTED_KEY]', sanitized)
+    Args:
+        request: GenerateRequest with user_input, template_context, template_id
     
-    # Remove stack traces (lines starting with whitespace followed by 'at' or 'File')
-    lines = sanitized.split('\n')
-    sanitized_lines = [line for line in lines if not re.match(r'^\s+(at|File|Traceback)', line)]
-    sanitized = '\n'.join(sanitized_lines)
+    Returns:
+        SuccessResponse with generated content
     
-    # Truncate to reasonable length to avoid leaking large payloads
-    if len(sanitized) > 500:
-        sanitized = sanitized[:500] + '...'
-    
-    return sanitized.strip()
-
-
-def parse_claude_response(response: dict) -> str:
-    """
-    Parse Claude API response and extract generated content.
-    Raises ValueError if response is malformed or empty.
-    Raises AttributeError if required fields are missing.
+    Raises:
+        HTTPException with structured error response for:
+        - 400: validation_error (missing/malformed input)
+        - 408: timeout_error (Claude API timeout)
+        - 502: api_error (Claude API error)
+        - 503: service_unavailable (connection error)
     """
     try:
-        # Check for 'content' field
-        if 'content' not in response:
-            raise ValueError("Missing 'content' field in Claude API response")
+        # Validate input
+        if not request.user_input or not request.user_input.strip():
+            logger.warning("Empty user_input provided")
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "validation_error",
+                    "message": "user_input cannot be empty",
+                    "status_code": 400,
+                },
+            )
         
-        content = response['content']
+        if not request.template_context or not request.template_context.strip():
+            logger.warning("Empty template_context provided")
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "validation_error",
+                    "message": "template_context cannot be empty",
+                    "status_code": 400,
+                },
+            )
         
-        # Check if content is a list
-        if not isinstance(content, list):
-            raise TypeError(f"Expected 'content' to be a list, got {type(content).__name__}")
+        if not request.template_id or not request.template_id.strip():
+            logger.warning("Empty template_id provided")
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "validation_error",
+                    "message": "template_id cannot be empty",
+                    "status_code": 400,
+                },
+            )
         
-        # Check if content array is empty
-        if len(content) == 0:
-            raise ValueError("Empty 'content' array in Claude API response")
-        
-        # Extract text from first content item
-        first_item = content[0]
-        if not isinstance(first_item, dict):
-            raise TypeError(f"Expected content item to be a dict, got {type(first_item).__name__}")
-        
-        # Check for 'text' field
-        if 'text' not in first_item:
-            raise AttributeError("Missing 'text' field in content item")
-        
-        text = first_item['text']
-        
-        if not isinstance(text, str):
-            raise TypeError(f"Expected 'text' to be a string, got {type(text).__name__}")
-        
-        if len(text.strip()) == 0:
-            raise ValueError("Generated text is empty")
-        
-        return text
-    
-    except (KeyError, AttributeError, TypeError, ValueError) as e:
-        # Re-raise with clear error message
-        raise ValueError(f"Failed to parse Claude API response: {str(e)}") from e
-
-
-@app.post("/generate", response_model=GenerateResponse)
-def generate(request: GenerateRequest):
-    """
-    Generate personalized content using Claude API.
-    Returns HTTP 422 on parse failures, HTTP 500 on internal errors.
-    """
-    try:
         # Call Claude API
+        prompt = f"""
+Template Context:
+{request.template_context}
+
+User Input:
+{request.user_input}
+
+Generate personalized content for this template based on the user input.
+"""
+        
         message = client.messages.create(
             model="claude-3-5-sonnet-20241022",
-            max_tokens=2000,
+            max_tokens=1024,
             messages=[
-                {
-                    "role": "user",
-                    "content": f"Template: {request.template_id}\nUser input: {request.user_input}"
-                }
-            ]
+                {"role": "user", "content": prompt}
+            ],
         )
         
-        # Parse response
-        try:
-            content = parse_claude_response(message.model_dump())
-            return GenerateResponse(content=content)
-        except ValueError as e:
-            # Parse failure: return 422 Unprocessable Entity
-            error_detail = sanitize_error_detail(str(e))
-            # Log full error server-side for debugging
-            import logging
-            logging.error(f"Parse error: {str(e)}", exc_info=True)
+        # Extract content from response
+        if not message.content or len(message.content) == 0:
+            logger.error("Empty response from Claude API")
             raise HTTPException(
-                status_code=422,
-                detail=ErrorResponse(error=error_detail).model_dump()
+                status_code=502,
+                detail={
+                    "error": "api_error",
+                    "message": "Claude API returned empty response",
+                    "status_code": 502,
+                },
             )
+        
+        content = message.content[0].text
+        
+        return SuccessResponse(
+            content=content,
+            template_id=request.template_id,
+        )
     
     except HTTPException:
-        # Re-raise HTTP exceptions (already formatted)
+        # Re-raise HTTP exceptions (validation errors)
         raise
+    
+    except APITimeoutError as e:
+        logger.error(f"Claude API timeout: {str(e)}")
+        raise HTTPException(
+            status_code=408,
+            detail={
+                "error": "timeout_error",
+                "message": "Claude API request timed out. Please try again.",
+                "status_code": 408,
+            },
+        )
+    
+    except APIConnectionError as e:
+        logger.error(f"Claude API connection error: {str(e)}")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "service_unavailable",
+                "message": "Claude API is temporarily unavailable. Please try again later.",
+                "status_code": 503,
+            },
+        )
+    
+    except APIError as e:
+        logger.error(f"Claude API error: {str(e)}")
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "error": "api_error",
+                "message": "Claude API returned an error. Please try again.",
+                "status_code": 502,
+            },
+        )
+    
     except Exception as e:
-        # Unexpected error: return 500 Internal Server Error
-        error_detail = sanitize_error_detail(str(e))
-        # Log full error server-side for debugging
-        import logging
-        logging.error(f"Internal error: {str(e)}", exc_info=True)
+        # Catch any other unexpected errors
+        logger.error(f"Unexpected error in /generate: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=ErrorResponse(error=error_detail).model_dump()
+            detail={
+                "error": "internal_error",
+                "message": "An unexpected error occurred. Please try again later.",
+                "status_code": 500,
+            },
         )
 
 
 @app.get("/health")
-def health():
-    """
-    Health check endpoint.
-    """
+async def health():
+    """Health check endpoint."""
     return {"status": "ok"}
