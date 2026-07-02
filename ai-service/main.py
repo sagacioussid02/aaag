@@ -1,58 +1,36 @@
-import os
-import json
-from contextlib import asynccontextmanager
-from typing import Optional
-
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
-from anthropic import Anthropic, APITimeoutError, APIError, APIConnectionError
+from anthropic import Anthropic, APIError, APIConnectionError, APITimeoutError
+import os
 
-# Initialize Anthropic client
+app = FastAPI()
+
 client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 
 class GenerateRequest(BaseModel):
-    """Request model for content generation."""
-    template_id: str = Field(..., min_length=1, description="Template identifier")
-    user_input: str = Field(..., min_length=1, description="User input for personalization")
-    template_context: str = Field(..., min_length=1, description="Template context for generation")
+    user_input: str = Field(min_length=1, description="User input for content generation")
+    template_context: str = Field(min_length=1, description="Template context")
+    template_id: str = Field(min_length=1, description="Template ID")
 
 
 class GenerateResponse(BaseModel):
-    """Response model for content generation."""
     content: str
-    status: str = "success"
-
-
-class ErrorResponse(BaseModel):
-    """Structured error response."""
-    error: str
-    status: str = "error"
-    details: Optional[str] = None
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Startup
-    print("AI Service starting up...")
-    yield
-    # Shutdown
-    print("AI Service shutting down...")
-
-
-app = FastAPI(title="AI Service", lifespan=lifespan)
+    template_id: str
 
 
 @app.post("/generate", response_model=GenerateResponse)
-async def generate(request: GenerateRequest):
+def generate(request: GenerateRequest):
     """
     Generate personalized content using Claude.
     
-    Returns structured JSON error responses for all failure cases.
-    Error messages are hardcoded and safe — no raw exception strings are exposed.
+    Returns structured error responses for:
+    - 400: Invalid input (missing or empty fields)
+    - 502: Anthropic API error
+    - 503: Connection error
+    - 504: Timeout error
     """
     try:
-        # Call Anthropic API
         message = client.messages.create(
             model="claude-3-5-sonnet-20241022",
             max_tokens=1024,
@@ -63,69 +41,37 @@ async def generate(request: GenerateRequest):
                 }
             ],
         )
-        
-        # Extract content from response
-        content = message.content[0].text if message.content else ""
-        return GenerateResponse(content=content)
-    
-    except APITimeoutError:
-        # Timeout: return 504 Gateway Timeout
-        raise HTTPException(
-            status_code=504,
-            detail=json.dumps({
-                "error": "Request timeout",
-                "status": "error",
-                "details": "The AI service took too long to respond. Please try again."
-            })
+        return GenerateResponse(
+            content=message.content[0].text,
+            template_id=request.template_id,
         )
-    
-    except APIConnectionError:
-        # Connection error: return 503 Service Unavailable
-        raise HTTPException(
-            status_code=503,
-            detail=json.dumps({
-                "error": "Service unavailable",
-                "status": "error",
-                "details": "Unable to connect to the AI service. Please try again later."
-            })
-        )
-    
-    except APIError:
-        # Generic API error: return 502 Bad Gateway
+    except APIError as e:
+        # Anthropic API error (e.g., invalid model, rate limit, auth failure)
         raise HTTPException(
             status_code=502,
-            detail=json.dumps({
-                "error": "AI service error",
-                "status": "error",
-                "details": "The AI service encountered an error. Please try again."
-            })
+            detail="AI service temporarily unavailable. Please try again later.",
         )
-    
-    except ValueError as e:
-        # Validation error: return 400 Bad Request
+    except APIConnectionError:
+        # Network connectivity issue
         raise HTTPException(
-            status_code=400,
-            detail=json.dumps({
-                "error": "Invalid input",
-                "status": "error",
-                "details": "The provided input is invalid. Please check your request."
-            })
+            status_code=503,
+            detail="Service connection failed. Please try again later.",
         )
-    
-    except Exception as e:
-        # Unexpected error: return 500 Internal Server Error
-        # Error message is hardcoded and safe — no raw exception data is exposed
+    except APITimeoutError:
+        # Request timeout
+        raise HTTPException(
+            status_code=504,
+            detail="Request timed out. Please try again later.",
+        )
+    except Exception:
+        # Catch-all for unexpected errors; do not expose raw traceback
         raise HTTPException(
             status_code=500,
-            detail=json.dumps({
-                "error": "Internal server error",
-                "status": "error",
-                "details": "An unexpected error occurred. Please try again later."
-            })
+            detail="An unexpected error occurred. Please try again later.",
         )
 
 
-@app.get("/health")
-async def health():
-    """Health check endpoint."""
-    return {"status": "healthy"}
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=8000)
