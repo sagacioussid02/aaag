@@ -1,155 +1,154 @@
 import os
 import re
+from typing import Optional
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-import anthropic
-
-from fastapi import FastAPI, HTTPException, status
-from pydantic import BaseModel, Field
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, EmailStr, Field, validator
 from anthropic import Anthropic, APIError, APIConnectionError, APITimeoutError
 
+app = FastAPI()
+
 # Initialize Anthropic client
-client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-app = FastAPI(title="AaaG AI Service", version="1.0.0")
 
-class GenerateRequest(BaseModel):
-    """Request schema for /generate endpoint."""
-    template_id: str
-    user_input: str
+class WizardInput(BaseModel):
+    """Validated input from the wizard."""
+    template_id: str = Field(..., min_length=1, description="Template identifier")
+    user_input: str = Field(..., min_length=1, description="User-provided content")
+    user_name: Optional[str] = Field(None, description="User's name")
+    user_email: Optional[EmailStr] = Field(None, description="User's email")
+    customization: Optional[dict] = Field(default_factory=dict, description="Template customization options")
+
+    @validator('template_id')
+    def validate_template_id(cls, v):
+        if not v or not v.strip():
+            raise ValueError('template_id cannot be empty')
+        return v
+
+    @validator('user_input')
+    def validate_user_input(cls, v):
+        if not v or not v.strip():
+            raise ValueError('user_input cannot be empty')
+        return v
+
+    @validator('customization')
+    def validate_customization(cls, v):
+        if v is None:
+            return {}
+        if not isinstance(v, dict):
+            raise ValueError('customization must be a dictionary')
+        return v
 
 
 class ErrorResponse(BaseModel):
-    """Structured error response schema."""
-    error: str
-
-
-class GenerateResponse(BaseModel):
-    """Response schema for /generate endpoint."""
-    content: str
+    """Structured error response."""
+    detail: str
+    error_code: Optional[str] = None
 
 
 def sanitize_error_detail(error_message: str) -> str:
     """
-    Sanitize error details before returning to caller.
-    Removes API keys, tokens, and stack traces to prevent information leakage.
+    Sanitize error messages to prevent leakage of sensitive information.
+    Redacts API keys, Bearer tokens, and stack traces.
     """
-    sanitized = error_message
+    # Redact API keys (sk-* pattern)
+    sanitized = re.sub(r'sk-[A-Za-z0-9]{20,}', '[REDACTED_API_KEY]', error_message)
     
-    # Remove API keys (Bearer tokens, x-api-key patterns)
-    sanitized = re.sub(r'Bearer\s+[\w\-\.]+', '[REDACTED_TOKEN]', sanitized)
-    sanitized = re.sub(r'api[_-]?key[\s:=]+[\w\-\.]+', '[REDACTED_API_KEY]', sanitized, flags=re.IGNORECASE)
-    sanitized = re.sub(r'sk-[\w\-\.]+', '[REDACTED_KEY]', sanitized)
+    # Redact Bearer tokens
+    sanitized = re.sub(r'Bearer\s+[A-Za-z0-9._-]+', '[REDACTED_TOKEN]', sanitized)
     
-    # Remove stack traces (lines starting with whitespace followed by 'at' or 'File')
-    lines = sanitized.split('\n')
-    sanitized_lines = [line for line in lines if not re.match(r'^\s+(at|File|Traceback)', line)]
-    sanitized = '\n'.join(sanitized_lines)
+    # Redact common stack trace markers and file paths
+    sanitized = re.sub(r'File "[^"]+", line \d+', '[REDACTED_STACK_TRACE]', sanitized)
+    sanitized = re.sub(r'Traceback \(most recent call last\):', '[REDACTED_TRACEBACK]', sanitized)
     
-    # Truncate to reasonable length to avoid leaking large payloads
-    if len(sanitized) > 500:
-        sanitized = sanitized[:500] + '...'
-    
-    return sanitized.strip()
+    return sanitized
 
 
-def parse_claude_response(response: dict) -> str:
+@app.post("/generate")
+async def generate(request: WizardInput):
     """
-    Parse Claude API response and extract generated content.
-    Raises ValueError if response is malformed or empty.
-    Raises AttributeError if required fields are missing.
+    Generate personalized content using Claude.
+    
+    Args:
+        request: Validated wizard input
+    
+    Returns:
+        Generated content from Claude
+    
+    Raises:
+        HTTPException: For validation errors (422), API errors (502), timeouts (504)
     """
     try:
-        # Check for 'content' field
-        if 'content' not in response:
-            raise ValueError("Missing 'content' field in Claude API response")
+        # Build the prompt from user input and template context
+        prompt = f"Template: {request.template_id}\nUser input: {request.user_input}"
+        if request.user_name:
+            prompt += f"\nUser name: {request.user_name}"
+        if request.customization:
+            prompt += f"\nCustomization: {request.customization}"
         
-        content = response['content']
-        
-        # Check if content is a list
-        if not isinstance(content, list):
-            raise TypeError(f"Expected 'content' to be a list, got {type(content).__name__}")
-        
-        # Check if content array is empty
-        if len(content) == 0:
-            raise ValueError("Empty 'content' array in Claude API response")
-        
-        # Extract text from first content item
-        first_item = content[0]
-        if not isinstance(first_item, dict):
-            raise TypeError(f"Expected content item to be a dict, got {type(first_item).__name__}")
-        
-        # Check for 'text' field
-        if 'text' not in first_item:
-            raise AttributeError("Missing 'text' field in content item")
-        
-        text = first_item['text']
-        
-        if not isinstance(text, str):
-            raise TypeError(f"Expected 'text' to be a string, got {type(text).__name__}")
-        
-        if len(text.strip()) == 0:
-            raise ValueError("Generated text is empty")
-        
-        return text
-    
-    except (KeyError, AttributeError, TypeError, ValueError) as e:
-        # Re-raise with clear error message
-        raise ValueError(f"Failed to parse Claude API response: {str(e)}") from e
-
-
-@app.post("/generate", response_model=GenerateResponse)
-def generate(request: GenerateRequest):
-    """
-    Generate personalized content using Claude API.
-    Returns HTTP 422 on parse failures, HTTP 500 on internal errors.
-    """
-    try:
-        # Call Claude API
+        # Call Anthropic API
         message = client.messages.create(
             model="claude-3-5-sonnet-20241022",
-            max_tokens=2000,
+            max_tokens=1024,
             messages=[
-                {
-                    "role": "user",
-                    "content": f"Template: {request.template_id}\nUser input: {request.user_input}"
-                }
+                {"role": "user", "content": prompt}
             ]
         )
         
-        # Parse response
-        try:
-            content = parse_claude_response(message.model_dump())
-            return GenerateResponse(content=content)
-        except ValueError as e:
-            # Parse failure: return 422 Unprocessable Entity
-            error_detail = sanitize_error_detail(str(e))
-            # Log full error server-side for debugging
-            import logging
-            logging.error(f"Parse error: {str(e)}", exc_info=True)
-            raise HTTPException(
-                status_code=422,
-                detail=ErrorResponse(error=error_detail).model_dump()
-            )
+        # Extract and return the generated content
+        return {
+            "generated_content": message.content[0].text,
+            "template_id": request.template_id,
+            "user_name": request.user_name
+        }
     
-    except HTTPException:
-        # Re-raise HTTP exceptions (already formatted)
-        raise
+    except APITimeoutError as e:
+        # Timeout from Anthropic API
+        sanitized_detail = sanitize_error_detail(str(e))
+        raise HTTPException(
+            status_code=504,
+            detail=sanitized_detail,
+            headers={"X-Error-Code": "ANTHROPIC_TIMEOUT"}
+        )
+    
+    except APIConnectionError as e:
+        # Connection error from Anthropic API
+        sanitized_detail = sanitize_error_detail(str(e))
+        raise HTTPException(
+            status_code=502,
+            detail=sanitized_detail,
+            headers={"X-Error-Code": "ANTHROPIC_CONNECTION_ERROR"}
+        )
+    
+    except APIError as e:
+        # Other Anthropic API errors
+        sanitized_detail = sanitize_error_detail(str(e))
+        raise HTTPException(
+            status_code=502,
+            detail=sanitized_detail,
+            headers={"X-Error-Code": "ANTHROPIC_API_ERROR"}
+        )
+    
+    except ValueError as e:
+        # Validation errors (e.g., invalid customization dict)
+        raise HTTPException(
+            status_code=422,
+            detail=str(e),
+            headers={"X-Error-Code": "VALIDATION_ERROR"}
+        )
+    
     except Exception as e:
-        # Unexpected error: return 500 Internal Server Error
-        error_detail = sanitize_error_detail(str(e))
-        # Log full error server-side for debugging
-        import logging
-        logging.error(f"Internal error: {str(e)}", exc_info=True)
+        # Catch-all for unexpected errors
+        sanitized_detail = sanitize_error_detail(str(e))
         raise HTTPException(
             status_code=500,
-            detail=ErrorResponse(error=error_detail).model_dump()
+            detail=sanitized_detail,
+            headers={"X-Error-Code": "INTERNAL_ERROR"}
         )
 
 
 @app.get("/health")
-def health():
-    """
-    Health check endpoint.
-    """
+async def health():
+    """Health check endpoint."""
     return {"status": "ok"}
