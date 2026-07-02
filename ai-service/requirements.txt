@@ -1,8 +1,9 @@
 fastapi==0.104.1
 uvicorn==0.24.0
 pydantic==2.5.0
+pydantic[email]==2.5.0
+# anthropic==0.21.0 pinned for compatibility with current API contract
+# (newer versions 0.22+ have breaking changes in error handling)
 anthropric==0.21.0
-python-dotenv==1.0.0
 pytest==7.4.3
 pytest-asyncio==0.21.1
-httpx==0.25.2
