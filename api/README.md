@@ -54,8 +54,6 @@ The API will be available at `http://localhost:8080`.
 ### POST /api/orders
 
 Create a new order and generate personalized content.
-go mod tidy
-```
 
 ### Environment Variables
 
@@ -148,6 +146,19 @@ Unit tests validate:
 - AI Service integration
 - Error handling and propagation
 
+### Build & Verify (for CI)
+
+```bash
+# Verify dependencies (errors block CI)
+go mod tidy
+
+# Static analysis (errors block CI)
+go vet ./...
+
+# Build binary (errors block CI)
+go build -o server ./cmd/server
+```
+
 ## Architecture
 
 See [ARCHITECTURE.md](../ARCHITECTURE.md) for the full service topology and data flow.
@@ -164,6 +175,11 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md) for the TODO/FIXME triage framework.
 ## Contributing
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for branch naming, PR process, and TODO/FIXME triage framework.
+
+#### POST /api/orders (continued)
+
+```json
+{
   "user_id": "uuid",
   "app_name": "string",
   "app_description": "string",

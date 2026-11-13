@@ -75,6 +75,16 @@ npm run test
 npm run test:e2e
 ```
 
+### Build & Lint (for CI)
+
+```bash
+# Run linting (errors block CI)
+npm run lint
+
+# Run Next.js production build (errors block CI)
+npm run build
+```
+
 ## Architecture
 
 See [ARCHITECTURE.md](../ARCHITECTURE.md) for the full service topology and data flow.
