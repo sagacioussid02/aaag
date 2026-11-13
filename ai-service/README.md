@@ -1,221 +1,108 @@
-# AI Service
+# AaaG AI Service (Python + FastAPI)
 
-## Overview
+Claude-powered content generation for personalized micro-apps.
 
-The AI Service is a Python FastAPI application that provides Claude-powered content generation for personalized micro-apps. It wraps the Anthropic SDK and exposes a single `/generate` endpoint for the Go API to call.
+## Tech
 
-## Local Setup
+- **Language**: Python 3.11+
+- **Framework**: FastAPI
+- **Server**: Uvicorn
+- **Port**: 8000
+- **AI**: Anthropic Claude API
+
+## Setup
 
 ### Prerequisites
 
-- Python 3.10+
-- pip or poetry
-- Anthropic API key
+- Python 3.11+
+- pip
 
 ### Installation
 
 ```bash
 cd ai-service
+pip install -r requirements.txt
+```
 
-# Create a .env file with your Anthropic API key
-cp .env.example .env
-# Edit .env and add your ANTHROPIC_API_KEY value
+### Development
 
+```bash
+uvicorn main:app --reload --port 8000
+```
+
+Server starts on [http://localhost:8000](http://localhost:8000).
+
+API docs available at [http://localhost:8000/docs](http://localhost:8000/docs).
+
+## Environment Variables
+
+Create a `.env` file (ignored by git):
+
+```
+ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+```
+
+See `.env.example` for all options.
+
+## Build & Smoke Test (for CI)
+
+```bash
 # Install dependencies
 pip install -r requirements.txt
 
-# Run the service
-uvicorn main:app --reload --port 8000
+# Verify main module imports (smoke test)
+python -c "import main; print('✓ main module imports successfully')"
 ```
 
-The service will be available at `http://localhost:8000`.
-
-### Environment Variables
-
-**Required:**
-- `ANTHROPIC_API_KEY` — Your Anthropic API key (get from https://console.anthropic.com)
-
-**Optional:**
-- `UVICORN_HOST` — Host to bind to (default: `127.0.0.1`)
-- `UVICORN_PORT` — Port to bind to (default: `8000`)
-
-## API Contract
-
-### POST /generate
-
-Generate personalized content using Claude.
-pip install -r requirements.txt
-```
-
-### Environment Variables
-
-Create a `.env` file in the `ai-service/` directory:
-
-```bash
-cp .env.example .env
-```
-
-Then update with your values:
-
-```
-# Anthropic API key (required)
-ANTHROPIC_API_KEY=sk-ant-...
-
-# Server port
-PORT=8000
-
-# Logging level
-LOG_LEVEL=INFO
-
-# Environment
-ENVIRONMENT=development
-```
-
-**Important:** Do not commit `.env` to version control. Use `.env.example` to document required variables.
-
-### Running Locally
-
-```bash
-uvicorn main:app --reload --port 8000
-```
-
-The API will start on http://localhost:8000.
-
-API documentation is available at http://localhost:8000/docs (Swagger UI).
-
-## API Endpoints
-
-### Content Generation
-
-#### POST /generate
-Generate content using Claude based on app configuration.
-
-**Request:**
-```json
-{
-  "order_id": "uuid",
-  "app_name": "string",
-  "app_description": "string",
-  "template_id": "string",
-  "customization": {
-    "color_scheme": "string",
-    "tone": "string"
-  }
-}
-```
-
-**Response (200):**
-```json
-{
-  "order_id": "uuid",
-  "content": "string (HTML/JSX)",
-  "metadata": {
-    "tokens_used": "number",
-    "model": "string"
-  }
-}
-```
-
-**Response (400/500):**
-```json
-{
-  "error": "string",
-  "code": "string",
-  "details": "string (optional)"
-}
-```
-
-For complete request/response schemas, see [ARCHITECTURE.md](../ARCHITECTURE.md#inter-service-request-response-schema-baseline).
+Both must pass in CI before merge.
 
 ## Project Structure
 
 ```
 ai-service/
-├── main.py                # FastAPI app entry point
-├── models.py              # Pydantic models for request/response
-├── services/
-│   └── claude.py          # Claude API integration
-├── handlers/              # Request handlers
-├── middleware/            # HTTP middleware
+├── main.py                # FastAPI app and routes
 ├── requirements.txt       # Python dependencies
-├── .env.example           # Environment variable template
-└── README.md
+├── .env.example           # Template for environment variables
+└── README.md              # This file
 ```
 
-## Claude Integration
+## API Endpoints
 
-The service uses the Anthropic Python SDK to call Claude:
+### POST /generate
 
-1. Receives content generation request from Go API
-2. Constructs prompt based on app configuration and customization
-3. Calls Claude API with prompt
-4. Parses Claude response and formats as HTML/JSX
-5. Returns generated content to Go API
+Generate personalized app content via Claude.
 
-### Error Handling
+```json
+{
+  "template_id": "greeting-card",
+  "user_input": "Birthday card for my friend Alex",
+  "context": { ... }
+}
+```
 
-The service properly handles and propagates Anthropic SDK errors:
+Returns:
 
-- API key validation errors
-- Rate limiting errors
-- Network errors
-- Invalid request errors
-
-**Note:** Error propagation has known gaps (tracked as P0 bug). See [ARCHITECTURE.md](../ARCHITECTURE.md#known-gaps-and-tracked-issues).
+```json
+{
+  "content": "Generated personalized content...",
+  "metadata": { ... }
+}
+```
 
 ## Testing
 
 ```bash
-# Run tests
-pytest
-
-# Run tests with coverage
-pytest --cov=.
-
-# Run linting
-flake8 .
-pylint *.py
-```
-
-## Building
-
-```bash
-# Build Docker image
-docker build -t aaag-ai-service .
+pytest  # Run tests (when implemented)
 ```
 
 ## Deployment
 
-The service is designed to deploy to Cloud Run or similar containerized environment:
+Deployed via Cloud Run or similar managed service on every push to `main` (once CI is green).
 
-```bash
-# Build and push Docker image
-docker build -t gcr.io/PROJECT_ID/aaag-ai-service .
-docker push gcr.io/PROJECT_ID/aaag-ai-service
+## CI Integration
 
-# Deploy to Cloud Run
-gcloud run deploy aaag-ai-service --image gcr.io/PROJECT_ID/aaag-ai-service
-```
+GitHub Actions:
+1. Installs all dependencies via `pip install -r requirements.txt`
+2. Runs import smoke test: `python -c "import main"`
 
-Set environment variables in deployment:
-- `ANTHROPIC_API_KEY` — Production Anthropic API key
-- `PORT` — Server port (default: 8000)
-- `LOG_LEVEL` — Logging level (default: INFO)
-
-## Troubleshooting
-
-### "Invalid API key"
-
-Ensure `ANTHROPIC_API_KEY` is set correctly in `.env` and is a valid Anthropic API key.
-
-### "Rate limit exceeded"
-
-The service is hitting Anthropic API rate limits. Wait before retrying or upgrade your Anthropic plan.
-
-### "Service not responding"
-
-Ensure the service is running and accessible on the configured port.
-
-## Contributing
-
-See [CONTRIBUTING.md](../CONTRIBUTING.md) for branch naming, PR process, and code standards.
+Both must pass before merge.
